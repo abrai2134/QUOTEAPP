@@ -365,9 +365,11 @@ def generate_quote_xlsx(quote, out_path):
 
 
 def xlsx_to_pdf(xlsx_path, out_dir=None):
-    """Render the workbook to a one-page PDF using LibreOffice.
+    """Render the workbook to a PDF using LibreOffice, when it is installed.
 
-    Returns the PDF path, or None when LibreOffice is not installed.
+    No longer used by the app - quote_pdf.py draws the PDF directly, which
+    works on a hosted server too.  Kept for anyone converting a workbook by
+    hand.  Returns the PDF path, or None when LibreOffice is absent.
     """
     out_dir = out_dir or os.path.dirname(os.path.abspath(xlsx_path))
     with tempfile.TemporaryDirectory() as profile:

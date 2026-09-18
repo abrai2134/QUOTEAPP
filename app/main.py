@@ -18,7 +18,8 @@ from .order_sheet import (COLUMNS as SHEET_COLUMNS, HEADINGS, MIRROR_PATH, STD_F
                           new_sheet_id, push_to_sheet, row_to_quote, sheet_url,
                           sync_quote)
 from .print_view import render as render_print_view
-from .quote_xlsx import build_filename, generate_quote_xlsx, xlsx_to_pdf
+from .quote_pdf import generate_quote_pdf
+from .quote_xlsx import build_filename, generate_quote_xlsx
 
 OUTPUT_DIR = os.path.join(INSTANCE_DIR, "output")
 
@@ -559,7 +560,10 @@ def render_quote_files(quote, want_pdf=False):
     xlsx_path = os.path.join(OUTPUT_DIR, f"{quote['id']:05d}_{filename}")
     generate_quote_xlsx(payload, xlsx_path)
 
-    pdf_path = xlsx_to_pdf(xlsx_path) if want_pdf else None
+    pdf_path = None
+    if want_pdf:
+        pdf_path = os.path.splitext(xlsx_path)[0] + ".pdf"
+        generate_quote_pdf(payload, pdf_path)
     return xlsx_path, pdf_path, filename
 
 
@@ -594,8 +598,6 @@ def download(quote_id):
 
     xlsx_path, pdf_path, filename = render_quote_files(quote, want_pdf=(fmt == "pdf"))
     if fmt == "pdf":
-        if not pdf_path:
-            return jsonify({"error": "PDF conversion needs LibreOffice installed"}), 503
         return send_file(pdf_path, as_attachment=True,
                          download_name=os.path.splitext(filename)[0] + ".pdf")
     return send_file(xlsx_path, as_attachment=True, download_name=filename)
@@ -627,10 +629,19 @@ def sync_one(quote_id):
     if not quote:
         conn.close()
         return jsonify({"error": "Not found"}), 404
+    if not sheet_configured():
+        conn.close()
+        return jsonify({
+            "error": "No Google Sheet is connected yet. Open Setup, paste the "
+                     "Apps Script web app URL and press Test the connection.",
+        }), 400
+
     synced, message = sync_quote(quote)
     record_sync(conn, quote_id, synced, message)
     conn.close()
-    return jsonify({"synced": synced, "message": message}), (200 if synced else 502)
+    if synced:
+        return jsonify({"synced": True, "message": message})
+    return jsonify({"synced": False, "error": message}), 502
 
 
 @app.post("/api/sync-pending")

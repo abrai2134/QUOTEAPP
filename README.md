@@ -31,7 +31,7 @@ From a saved quotation you can:
 
 - **Download XLSX** — the workbook, identical in layout to your AppSheet output
 - **Print / Save as PDF** — opens an A4 page; your browser's Print dialog saves the PDF
-- **Download PDF file** — direct PDF (needs LibreOffice installed, see below)
+- **Download PDF file** — a one-page A4 PDF, drawn by the app itself
 - **E-mail to party** — sends the xlsx + pdf straight to the party's address
 
 ---
@@ -159,14 +159,12 @@ attach it yourself.
 
 ## PDF notes
 
-There are two ways to get a PDF:
+**Download PDF file** draws the quotation straight to a one-page A4 PDF — same
+layout as the workbook, rupee signs and all. It needs nothing installed, so it
+works on a phone and on a hosted server alike.
 
-- **Print / Save as PDF** (recommended) — works everywhere, no extra software.
-  It opens an A4 page laid out like the quotation; use the browser's Print
-  dialog and choose *Save as PDF*.
-- **Download PDF file** — converts the real workbook using
-  [LibreOffice](https://www.libreoffice.org/), which must be installed. If it is
-  not, the app says so and you use the print route instead.
+**Print / Save as PDF** is still there if you would rather use the browser's own
+print dialog, for instance to print on paper.
 
 ---
 
