@@ -137,7 +137,8 @@ $('#sheetBackdrop').onclick = (e) => { if (e.target.id === 'sheetBackdrop') clos
 /* ----------------------------------------------------------- quotes list */
 
 async function loadQuotes(query = '') {
-  const rows = await api(`/api/quotes?q=${encodeURIComponent(query)}`);
+  const sort = $('#quoteSort').value;
+  const rows = await api(`/api/quotes?q=${encodeURIComponent(query)}&sort=${sort}`);
   const list = $('#quoteList');
   list.innerHTML = '';
   $('#quotesEmpty').hidden = rows.length > 0 || Boolean(query);
@@ -163,6 +164,7 @@ async function loadQuotes(query = '') {
 }
 
 $('#quoteSearch').addEventListener('input', debounce((e) => loadQuotes(e.target.value)));
+$('#quoteSort').addEventListener('change', () => loadQuotes($('#quoteSearch').value));
 
 /* ---------------------------------------------------------- quote detail */
 
@@ -231,6 +233,42 @@ $('#btnPdf').onclick = () => {
   toast('Building PDF…');
   window.location = `/api/quotes/${currentQuoteId}/download?fmt=pdf`;
 };
+
+$('#btnShare').onclick = async (e) => {
+  const btn = e.currentTarget;
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Preparing…';
+  try {
+    const q = await api(`/api/quotes/${currentQuoteId}`);
+    const res = await fetch(`/api/quotes/${currentQuoteId}/download?fmt=pdf`);
+    if (!res.ok) throw new Error('Could not build the PDF');
+    const blob = await res.blob();
+
+    const stamp = (q.quote_date || '').slice(0, 10).split('-').reverse().join('/');
+    const name = `${q.party_name} ${stamp}`.replace(/[\\/:*?"<>|]+/g, ' ').trim();
+    const caption = `${stamp} · ${q.party_name} · ${money(q.grand_total)}`;
+    const file = new File([blob], `${name}.pdf`, { type: 'application/pdf' });
+
+    // Phones hand the file straight to WhatsApp, Telegram or e-mail.
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: q.party_name, text: caption });
+      return;
+    }
+    // Desktop browsers have no share sheet: open the PDF instead.
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    toast('Sharing is a phone feature - the PDF is open in a new tab');
+  } catch (err) {
+    if (err && err.name === 'AbortError') return;   // the user closed the sheet
+    toast(err.message || 'Could not share this quotation', true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+};
+
 $('#btnEditQuote').onclick = async () => {
   const q = await api(`/api/quotes/${currentQuoteId}`);
   fillForm(q);
@@ -586,7 +624,9 @@ $('#btnSaveTerms').onclick = async () => {
 /* ------------------------------------------------------------- clients */
 
 async function loadClients(query = '') {
-  const rows = await api(`/api/clients?q=${encodeURIComponent(query)}&limit=60`);
+  const sort = $('#clientSort').value;
+  const rows = await api(
+    `/api/clients?q=${encodeURIComponent(query)}&limit=60&sort=${sort}`);
   const list = $('#clientList');
   list.innerHTML = '';
   rows.forEach((c) => {
@@ -601,6 +641,7 @@ async function loadClients(query = '') {
   });
 }
 $('#clientSearch').addEventListener('input', debounce((e) => loadClients(e.target.value)));
+$('#clientSort').addEventListener('change', () => loadClients($('#clientSearch').value));
 
 
 

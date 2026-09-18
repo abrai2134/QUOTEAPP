@@ -24,7 +24,17 @@
   <!-- ============================ QUOTES LIST ======================== -->
   <section class="screen" data-screen="quotes">
     <div class="search-wrap">
-      <input type="search" id="quoteSearch" placeholder="Search party or quote no…" autocomplete="off">
+      <input type="search" id="quoteSearch" placeholder="Search party, M/S, city or person…" autocomplete="off">
+    </div>
+    <div class="sortbar">
+      <label for="quoteSort">Sort</label>
+      <select id="quoteSort">
+        <option value="date_desc">Newest first</option>
+        <option value="date_asc">Oldest first</option>
+        <option value="party">Party A – Z</option>
+        <option value="amount_desc">Amount, high to low</option>
+        <option value="amount_asc">Amount, low to high</option>
+      </select>
     </div>
     <div id="quoteList" class="card-list"></div>
     <p class="empty" id="quotesEmpty" hidden>No quotations yet. Tap <b>+ New</b> to raise your first one.</p>
@@ -172,6 +182,7 @@
       <button class="primary" id="btnXlsx">⬇ Download XLSX</button>
       <button class="primary alt" id="btnPrint">🖨 Print / Save as PDF</button>
       <button class="ghost" id="btnPdf">⬇ Download PDF file</button>
+      <button class="primary alt" id="btnShare">📤 Share this quotation</button>
       <button class="ghost" id="btnEmail">✉ E-mail to party</button>
       <button class="ghost" id="btnSyncQuote">⟳ Send to the Order items sheet</button>
       <button class="ghost" id="btnEditQuote">✎ Edit</button>
@@ -183,6 +194,15 @@
   <section class="screen" data-screen="clients" hidden>
     <div class="search-wrap">
       <input type="search" id="clientSearch" placeholder="Search party, city, phone, GST…" autocomplete="off">
+    </div>
+    <div class="sortbar">
+      <label for="clientSort">Sort</label>
+      <select id="clientSort">
+        <option value="name">Name A – Z</option>
+        <option value="name_desc">Name Z – A</option>
+        <option value="city">City</option>
+        <option value="recent">Recently added</option>
+      </select>
     </div>
     <button class="add-btn" id="btnAddParty">+ Add a new party</button>
     <div id="clientList" class="card-list"></div>

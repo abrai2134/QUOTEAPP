@@ -236,53 +236,55 @@ def generate_quote_pdf(quote, out_path):
     y = table_top - table_h
 
     # ---- terms | totals + bank -------------------------------------------
-    left_w = COL_W[0] + COL_W[1] + COL_W[2]
-    right_x = x0 + left_w
-    right_w = CONTENT_W - left_w
-    head_h = 5 * mm
+    # Two columns that start and finish on the same lines, split where the
+    # Description column ends.  Nothing is drawn between them, so none of the
+    # item table's column rules carry on into this block.
+    split_x = edges[2]
+    left_w = split_x - x0
+    right_w = x0 + CONTENT_W - split_x
+    head_h = 5.4 * mm
+    block_h = head_h * 6           # red header + five bands of terms
+    block_top = y
 
+    # left: the terms, red header over a solid black body
     c.setFillColor(red)
-    c.rect(x0, y - head_h, left_w, head_h, stroke=1, fill=1)
+    c.rect(x0, block_top - head_h, left_w, head_h, stroke=1, fill=1)
     c.setFillColor(white)
-    c.setFont(SERIF_BOLD, 9)
-    c.drawString(x0 + 1.5 * mm, y - head_h + 1.4 * mm, "TERMS & CONDITIONS:-")
+    c.setFont(SERIF_BOLD, 9.5)
+    c.drawString(x0 + 1.5 * mm, block_top - head_h + 1.7 * mm, "TERMS & CONDITIONS:-")
 
     c.setFillColor(black)
-    for label, value in [("GST AMT", rupees(quote.get("gst_amount"))),
-                         ("G.TOTAL", rupees(quote.get("grand_total")))]:
-        row_y = y - head_h if label == "GST AMT" else y - head_h * 2
-        c.rect(right_x, row_y, right_w, head_h, stroke=1, fill=0)
-        c.line(right_x + right_w * 0.45, row_y, right_x + right_w * 0.45, row_y + head_h)
-        c.setFont(SERIF, 9)
-        c.drawCentredString(right_x + right_w * 0.225, row_y + 1.4 * mm, label)
-        c.setFont(SERIF_BOLD, 9)
-        c.drawCentredString(right_x + right_w * 0.725, row_y + 1.4 * mm, value)
-
-    terms_h = 30 * mm
-    terms_top = y - head_h
-    c.setFillColor(black)
-    c.rect(x0, terms_top - terms_h, left_w, terms_h, stroke=1, fill=1)
+    c.rect(x0, block_top - block_h, left_w, block_h - head_h, stroke=1, fill=1)
     _draw_para(c, quote.get("terms", ""),
-               _style(8, bold=True, leading=10, color=white),
-               x0 + 1.5 * mm, terms_top - 1.2 * mm, left_w - 3 * mm)
+               _style(8.6, bold=True, leading=10.6, color=white),
+               x0 + 1.5 * mm, block_top - head_h - 1.4 * mm, left_w - 3 * mm)
 
-    bank_top = y - head_h * 2
+    # right: the two totals, then the bank details
+    c.setFillColor(black)
+    for index, (label, value) in enumerate(
+            [("GST AMT", rupees(quote.get("gst_amount"))),
+             ("G.TOTAL", rupees(quote.get("grand_total")))]):
+        row_y = block_top - head_h * (index + 1)
+        c.rect(split_x, row_y, right_w, head_h, stroke=1, fill=0)
+        c.line(split_x + right_w * 0.45, row_y, split_x + right_w * 0.45, row_y + head_h)
+        c.setFont(SERIF, 9)
+        c.drawCentredString(split_x + right_w * 0.225, row_y + 1.7 * mm, label)
+        c.setFont(SERIF_BOLD, 9)
+        c.drawCentredString(split_x + right_w * 0.725, row_y + 1.7 * mm, value)
+
+    bank_head_y = block_top - head_h * 3
     c.setFillColor(blue)
-    c.rect(right_x, bank_top - head_h, right_w, head_h, stroke=1, fill=1)
+    c.rect(split_x, bank_head_y, right_w, head_h, stroke=1, fill=1)
     c.setFillColor(white)
-    c.setFont(SERIF_BOLD, 9)
-    c.drawCentredString(right_x + right_w / 2, bank_top - head_h + 1.4 * mm,
-                        "OUR BANK DETAILS")
+    c.setFont(SERIF_BOLD, 9.5)
+    c.drawCentredString(split_x + right_w / 2, bank_head_y + 1.7 * mm, "OUR BANK DETAILS")
 
     c.setFillColor(black)
-    # The right column carries three 5mm bands (GST, total, bank header) above
-    # the bank body, so the body takes what is left of the terms block's height
-    # and both columns end on the same line.
-    bank_h = terms_h - 2 * head_h
-    c.rect(right_x, bank_top - head_h - bank_h, right_w, bank_h, stroke=1, fill=0)
-    _draw_para(c, company.get("bank_details", ""), _style(7, bold=True, leading=8.6),
-               right_x + 1.5 * mm, bank_top - head_h - 1.2 * mm, right_w - 3 * mm)
-    y = terms_top - terms_h - 3.5 * mm
+    bank_h = block_h - head_h * 3
+    c.rect(split_x, block_top - block_h, right_w, bank_h, stroke=1, fill=0)
+    _draw_para(c, company.get("bank_details", ""), _style(7.6, bold=True, leading=9.2),
+               split_x + 1.5 * mm, bank_head_y - 1.4 * mm, right_w - 3 * mm)
+    y = block_top - block_h - 3.5 * mm
 
     # ---- contact strip ----------------------------------------------------
     c.setFont(SERIF_BOLD, 9)

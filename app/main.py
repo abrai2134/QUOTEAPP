@@ -163,23 +163,34 @@ def create_salesperson():
     return jsonify(dict(row)), 201
 
 
+CLIENT_SORTS = {
+    "name": "party COLLATE NOCASE ASC",
+    "name_desc": "party COLLATE NOCASE DESC",
+    "recent": "id DESC",
+    "city": "city COLLATE NOCASE ASC, party COLLATE NOCASE ASC",
+}
+
+
 @app.get("/api/clients")
 def search_clients():
     query = (request.args.get("q") or "").strip()
     limit = min(int(request.args.get("limit", 40)), 200)
+    order = CLIENT_SORTS.get(request.args.get("sort"), CLIENT_SORTS["name"])
     conn = get_db()
     if query:
         like = f"%{query}%"
+        # A name that starts with the search text still comes first, then the
+        # chosen order applies within each group.
         rows = conn.execute(
             """SELECT * FROM clients
                WHERE party LIKE ? OR city LIKE ? OR cell_no LIKE ? OR gst_no LIKE ?
-               ORDER BY CASE WHEN party LIKE ? THEN 0 ELSE 1 END, party
+               ORDER BY CASE WHEN party LIKE ? THEN 0 ELSE 1 END, """ + order + """
                LIMIT ?""",
             (like, like, like, like, f"{query}%", limit),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT * FROM clients ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+            "SELECT * FROM clients ORDER BY " + order + " LIMIT ?", (limit,)).fetchall()
     conn.close()
     return jsonify(rows_to_dicts(rows))
 
@@ -398,10 +409,20 @@ def load_quote(conn, quote_id):
     return quote
 
 
+QUOTE_SORTS = {
+    "date_desc": "q.quote_date DESC, q.id DESC",
+    "date_asc": "q.quote_date ASC, q.id ASC",
+    "party": "q.party_name COLLATE NOCASE ASC",
+    "amount_desc": "q.grand_total DESC",
+    "amount_asc": "q.grand_total ASC",
+}
+
+
 @app.get("/api/quotes")
 def list_quotes():
     query = (request.args.get("q") or "").strip()
     limit = min(int(request.args.get("limit", 50)), 200)
+    order = QUOTE_SORTS.get(request.args.get("sort"), QUOTE_SORTS["date_desc"])
     conn = get_db()
     if query:
         like = f"%{query}%"
@@ -409,14 +430,14 @@ def list_quotes():
             """SELECT q.*, c.name AS company_name FROM quotes q
                LEFT JOIN companies c ON c.id = q.company_id
                WHERE q.party_name LIKE ? OR q.quote_no LIKE ? OR q.city LIKE ?
-                  OR q.sheet_id LIKE ?
-               ORDER BY q.id DESC LIMIT ?""",
-            (like, like, like, like, limit)).fetchall()
+                  OR q.sheet_id LIKE ? OR q.salesperson LIKE ?
+               ORDER BY """ + order + " LIMIT ?",
+            (like, like, like, like, like, limit)).fetchall()
     else:
         rows = conn.execute(
             """SELECT q.*, c.name AS company_name FROM quotes q
                LEFT JOIN companies c ON c.id = q.company_id
-               ORDER BY q.id DESC LIMIT ?""", (limit,)).fetchall()
+               ORDER BY """ + order + " LIMIT ?", (limit,)).fetchall()
     conn.close()
     return jsonify(rows_to_dicts(rows))
 
