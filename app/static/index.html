@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f2d52">
+<title>Well Worth Quotation App</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📄</text></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-title" id="screenTitle">Quotations</div>
+  <button class="topbar-action" id="topAction" hidden></button>
+</header>
+
+<main id="app">
+
+  <!-- ============================ QUOTES LIST ======================== -->
+  <section class="screen" data-screen="quotes">
+    <div class="search-wrap">
+      <input type="search" id="quoteSearch" placeholder="Search party or quote no…" autocomplete="off">
+    </div>
+    <div id="quoteList" class="card-list"></div>
+    <p class="empty" id="quotesEmpty" hidden>No quotations yet. Tap <b>+ New</b> to raise your first one.</p>
+  </section>
+
+  <!-- ============================ QUOTE FORM ========================= -->
+  <section class="screen" data-screen="form" hidden>
+
+    <div class="block">
+      <h2>1 · Quoting from</h2>
+      <label>Your company
+        <select id="fCompany"></select>
+      </label>
+      <div class="company-preview" id="companyPreview"></div>
+      <div class="row-2">
+        <label>Prepared by
+          <select id="fSalesperson"></select>
+        </label>
+        <label>Contact no.
+          <input type="text" id="fSalesPhone" placeholder="99302 53293">
+        </label>
+      </div>
+    </div>
+
+    <div class="block">
+      <h2>2 · Party</h2>
+      <div class="picker" id="partyPicker">
+        <button class="picker-btn" id="btnPickParty">
+          <span class="picker-label">Tap to choose a party</span>
+          <span class="chev">›</span>
+        </button>
+      </div>
+      <label>M/S
+        <input type="text" id="fParty" placeholder="Party name">
+      </label>
+      <label>Address (prints in the ADD box)
+        <textarea id="fPartyAddress" rows="4" placeholder="Address, GST no, contact person, phone"></textarea>
+      </label>
+      <button class="link-btn" id="btnNewParty">+ Save as a new party in the database</button>
+    </div>
+
+    <div class="block">
+      <h2>3 · Items</h2>
+      <div id="itemList"></div>
+      <button class="add-btn" id="btnAddItem">+ Add item</button>
+    </div>
+
+    <div class="block">
+      <h2>4 · Totals &amp; status</h2>
+      <div class="row-2">
+        <label>GST %
+          <input type="number" id="fGst" value="18" min="0" step="0.01" inputmode="decimal">
+        </label>
+        <label>Advance received
+          <input type="number" id="fAdvance" value="0" min="0" step="0.01" inputmode="decimal">
+        </label>
+      </div>
+      <div class="row-2">
+        <label>Order status
+          <input type="text" id="fOrderStatus" value="PENDING" list="statusOptions">
+        </label>
+        <label>Dispatch
+          <input type="text" id="fDispatch" value="PENDING" list="statusOptions">
+        </label>
+      </div>
+      <datalist id="statusOptions">
+        <option value="PENDING"><option value="CONFIRMED"><option value="READY">
+        <option value="DISPATCHED"><option value="DELIVERED"><option value="CANCELLED">
+      </datalist>
+
+      <div class="totals">
+        <div><span>Sub total</span><b id="tSub">₹0.00</b></div>
+        <div><span>GST amount</span><b id="tGst">₹0.00</b></div>
+        <div class="grand"><span>G. Total</span><b id="tTotal">₹0.00</b></div>
+        <div><span>Balance payable</span><b id="tBalance">₹0.00</b></div>
+      </div>
+    </div>
+
+    <div class="block">
+      <h2>5 · Terms &amp; conditions</h2>
+      <textarea id="fTerms" rows="7"></textarea>
+      <button class="link-btn" id="btnSaveTerms">Save this as my default terms</button>
+    </div>
+
+    <div class="form-actions">
+      <button class="primary" id="btnSaveQuote">Save quotation</button>
+      <button class="ghost" id="btnCancelQuote">Cancel</button>
+    </div>
+  </section>
+
+  <!-- ============================ QUOTE DETAIL ======================= -->
+  <section class="screen" data-screen="detail" hidden>
+    <div id="detailBody"></div>
+    <div class="form-actions">
+      <button class="primary" id="btnXlsx">⬇ Download XLSX</button>
+      <button class="primary alt" id="btnPrint">🖨 Print / Save as PDF</button>
+      <button class="ghost" id="btnPdf">⬇ Download PDF file</button>
+      <button class="ghost" id="btnEmail">✉ E-mail to party</button>
+      <button class="ghost" id="btnEditQuote">✎ Edit</button>
+      <button class="danger" id="btnDeleteQuote">Delete</button>
+    </div>
+  </section>
+
+  <!-- ============================ CLIENTS ============================ -->
+  <section class="screen" data-screen="clients" hidden>
+    <div class="search-wrap">
+      <input type="search" id="clientSearch" placeholder="Search party, city, phone, GST…" autocomplete="off">
+    </div>
+    <div id="clientList" class="card-list"></div>
+  </section>
+
+  <!-- ============================ MACHINES =========================== -->
+  <section class="screen" data-screen="machines" hidden>
+    <div class="search-wrap">
+      <input type="search" id="machineSearch" placeholder="Search model or description…" autocomplete="off">
+    </div>
+    <div id="machineList" class="card-list"></div>
+  </section>
+
+  <!-- ============================ SETTINGS =========================== -->
+  <section class="screen" data-screen="settings" hidden>
+    <div class="block">
+      <h2>Default terms &amp; conditions</h2>
+      <textarea id="sTerms" rows="8"></textarea>
+      <button class="primary" id="btnSettingsSave">Save defaults</button>
+    </div>
+    <div class="block">
+      <h2>Salespersons</h2>
+      <div id="salesList"></div>
+      <div class="row-2">
+        <input type="text" id="newSalesName" placeholder="Name">
+        <input type="text" id="newSalesPhone" placeholder="Phone">
+      </div>
+      <button class="add-btn" id="btnAddSales">+ Add salesperson</button>
+    </div>
+    <div class="block">
+      <h2>E-mail delivery</h2>
+      <p class="hint" id="mailStatus"></p>
+      <p class="hint">
+        Set <code>QUOTEAPP_SMTP_USER</code> and <code>QUOTEAPP_SMTP_PASS</code>
+        (a Gmail <b>app password</b>) in the <code>.env</code> file next to
+        <code>run.sh</code>, then restart the app.
+      </p>
+    </div>
+    <div class="block">
+      <h2>Default company for new quotations</h2>
+      <select id="sDefaultCompany"></select>
+    </div>
+    <h2 style="font-size:13px;letter-spacing:.6px;color:#0f2d52;margin:18px 4px 8px">
+      YOUR COMPANIES</h2>
+    <div id="companyList"></div>
+  </section>
+
+</main>
+
+<nav class="tabbar">
+  <button data-go="quotes" class="active"><span>📄</span>Quotes</button>
+  <button data-go="new"><span>➕</span>New</button>
+  <button data-go="clients"><span>👥</span>Parties</button>
+  <button data-go="machines"><span>⚙️</span>Machines</button>
+  <button data-go="settings"><span>⚙</span>Setup</button>
+</nav>
+
+<!-- ============================ PICKER SHEET ======================== -->
+<div class="sheet-backdrop" id="sheetBackdrop" hidden>
+  <div class="sheet">
+    <div class="sheet-head">
+      <input type="search" id="sheetSearch" placeholder="Search…" autocomplete="off">
+      <button id="sheetClose">✕</button>
+    </div>
+    <div class="sheet-body" id="sheetBody"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>

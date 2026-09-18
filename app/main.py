@@ -1,0 +1,533 @@
+"""Flask backend for the Well Worth quotation app."""
+
+import os
+from datetime import datetime
+
+from flask import Flask, jsonify, request, send_file, send_from_directory
+
+from .db import DEFAULT_TERMS, INSTANCE_DIR, get_db, get_setting, init_db, now, set_setting
+from .mailer import MailNotConfigured, is_configured as mail_configured, send_quote
+from .print_view import render as render_print_view
+from .quote_xlsx import build_filename, generate_quote_xlsx, xlsx_to_pdf
+
+OUTPUT_DIR = os.path.join(INSTANCE_DIR, "output")
+
+app = Flask(__name__, static_folder="static", static_url_path="")
+
+
+def rows_to_dicts(rows):
+    return [dict(r) for r in rows]
+
+
+def as_float(value, default=0.0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+# --------------------------------------------------------------------------
+# static
+# --------------------------------------------------------------------------
+
+@app.get("/")
+def index():
+    return send_from_directory(app.static_folder, "index.html")
+
+
+# --------------------------------------------------------------------------
+# master data
+# --------------------------------------------------------------------------
+
+@app.get("/api/companies")
+def list_companies():
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM companies WHERE is_active = 1 ORDER BY name").fetchall()
+    conn.close()
+    return jsonify(rows_to_dicts(rows))
+
+
+@app.put("/api/companies/<int:company_id>")
+def update_company(company_id):
+    data = request.get_json(force=True)
+    conn = get_db()
+    conn.execute(
+        "UPDATE companies SET contact_line = ?, bank_details = ? WHERE id = ?",
+        (data.get("contact_line", ""), data.get("bank_details", ""), company_id),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM companies WHERE id = ?", (company_id,)).fetchone()
+    conn.close()
+    return jsonify(dict(row) if row else {})
+
+
+@app.get("/api/salespersons")
+def list_salespersons():
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM salespersons WHERE is_active = 1 ORDER BY name").fetchall()
+    conn.close()
+    return jsonify(rows_to_dicts(rows))
+
+
+@app.put("/api/salespersons/<int:sp_id>")
+def update_salesperson(sp_id):
+    data = request.get_json(force=True)
+    conn = get_db()
+    conn.execute(
+        "UPDATE salespersons SET phone = ?, email = ? WHERE id = ?",
+        (data.get("phone", ""), data.get("email", ""), sp_id),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM salespersons WHERE id = ?", (sp_id,)).fetchone()
+    conn.close()
+    return jsonify(dict(row) if row else {})
+
+
+@app.post("/api/salespersons")
+def create_salesperson():
+    data = request.get_json(force=True)
+    name = (data.get("name") or "").strip().upper()
+    if not name:
+        return jsonify({"error": "Name is required"}), 400
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO salespersons (name, phone, email) VALUES (?, ?, ?) "
+        "ON CONFLICT(name) DO UPDATE SET phone = excluded.phone, email = excluded.email",
+        (name, data.get("phone", ""), data.get("email", "")),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM salespersons WHERE name = ?", (name,)).fetchone()
+    conn.close()
+    return jsonify(dict(row)), 201
+
+
+@app.get("/api/clients")
+def search_clients():
+    query = (request.args.get("q") or "").strip()
+    limit = min(int(request.args.get("limit", 40)), 200)
+    conn = get_db()
+    if query:
+        like = f"%{query}%"
+        rows = conn.execute(
+            """SELECT * FROM clients
+               WHERE party LIKE ? OR city LIKE ? OR cell_no LIKE ? OR gst_no LIKE ?
+               ORDER BY CASE WHEN party LIKE ? THEN 0 ELSE 1 END, party
+               LIMIT ?""",
+            (like, like, like, like, f"{query}%", limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM clients ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    conn.close()
+    return jsonify(rows_to_dicts(rows))
+
+
+@app.get("/api/clients/<int:client_id>")
+def get_client(client_id):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM clients WHERE id = ?", (client_id,)).fetchone()
+    conn.close()
+    if not row:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify(dict(row))
+
+
+@app.post("/api/clients")
+def create_client():
+    data = request.get_json(force=True)
+    party = (data.get("party") or "").strip()
+    if not party:
+        return jsonify({"error": "Party name is required"}), 400
+    conn = get_db()
+    cur = conn.execute(
+        """INSERT INTO clients
+           (party, address, address2, city, cell_no, cell_no2, email, email2,
+            gst_no, remarks, entry_by, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (party, data.get("address", ""), data.get("address2", ""),
+         data.get("city", ""), data.get("cell_no", ""), data.get("cell_no2", ""),
+         data.get("email", ""), data.get("email2", ""), data.get("gst_no", ""),
+         data.get("remarks", ""), data.get("entry_by", ""), now()),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM clients WHERE id = ?", (cur.lastrowid,)).fetchone()
+    conn.close()
+    return jsonify(dict(row)), 201
+
+
+@app.put("/api/clients/<int:client_id>")
+def update_client(client_id):
+    data = request.get_json(force=True)
+    conn = get_db()
+    conn.execute(
+        """UPDATE clients SET party = ?, address = ?, address2 = ?, city = ?,
+               cell_no = ?, cell_no2 = ?, email = ?, email2 = ?, gst_no = ?,
+               remarks = ?
+           WHERE id = ?""",
+        (data.get("party", ""), data.get("address", ""), data.get("address2", ""),
+         data.get("city", ""), data.get("cell_no", ""), data.get("cell_no2", ""),
+         data.get("email", ""), data.get("email2", ""), data.get("gst_no", ""),
+         data.get("remarks", ""), client_id),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM clients WHERE id = ?", (client_id,)).fetchone()
+    conn.close()
+    return jsonify(dict(row) if row else {})
+
+
+@app.get("/api/machines")
+def search_machines():
+    query = (request.args.get("q") or "").strip()
+    limit = min(int(request.args.get("limit", 40)), 200)
+    conn = get_db()
+    if query:
+        like = f"%{query}%"
+        rows = conn.execute(
+            """SELECT * FROM machines
+               WHERE is_active = 1 AND (model LIKE ? OR description LIKE ?)
+               ORDER BY CASE WHEN model LIKE ? THEN 0 ELSE 1 END, model
+               LIMIT ?""",
+            (like, like, f"{query}%", limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM machines WHERE is_active = 1 ORDER BY model LIMIT ?",
+            (limit,)).fetchall()
+    conn.close()
+    return jsonify(rows_to_dicts(rows))
+
+
+@app.post("/api/machines")
+def create_machine():
+    data = request.get_json(force=True)
+    model = (data.get("model") or "").strip()
+    if not model:
+        return jsonify({"error": "Model is required"}), 400
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO machines (model, description, rate, entry_by, wed) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (model, data.get("description", ""), as_float(data.get("rate")),
+         data.get("entry_by", ""), datetime.now().strftime("%m/%d/%Y")),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM machines WHERE id = ?", (cur.lastrowid,)).fetchone()
+    conn.close()
+    return jsonify(dict(row)), 201
+
+
+@app.put("/api/machines/<int:machine_id>")
+def update_machine(machine_id):
+    data = request.get_json(force=True)
+    conn = get_db()
+    conn.execute(
+        "UPDATE machines SET model = ?, description = ?, rate = ? WHERE id = ?",
+        (data.get("model", ""), data.get("description", ""),
+         as_float(data.get("rate")), machine_id),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM machines WHERE id = ?", (machine_id,)).fetchone()
+    conn.close()
+    return jsonify(dict(row) if row else {})
+
+
+# --------------------------------------------------------------------------
+# settings
+# --------------------------------------------------------------------------
+
+@app.get("/api/settings")
+def read_settings():
+    return jsonify({
+        "default_terms": get_setting("default_terms", DEFAULT_TERMS),
+        "default_company": get_setting("default_company", ""),
+        "mail_configured": mail_configured(),
+    })
+
+
+@app.put("/api/settings")
+def write_settings():
+    data = request.get_json(force=True)
+    for key in ("default_terms", "default_company"):
+        if key in data:
+            set_setting(key, data[key])
+    return jsonify({
+        "default_terms": get_setting("default_terms", DEFAULT_TERMS),
+        "default_company": get_setting("default_company", ""),
+    })
+
+
+# --------------------------------------------------------------------------
+# quotes
+# --------------------------------------------------------------------------
+
+def compute_totals(items, gst_percent, advance):
+    subtotal = 0.0
+    gst_amount = 0.0
+    cleaned = []
+    for position, item in enumerate(items, start=1):
+        description = (item.get("description") or "").strip()
+        model = (item.get("model") or "").strip()
+        if not description and not model:
+            continue
+        qty = as_float(item.get("qty"), 1)
+        rate = as_float(item.get("rate"))
+        line_gst = as_float(item.get("gst_percent"), gst_percent)
+        amount = round(qty * rate, 2)
+        subtotal += amount
+        gst_amount += amount * line_gst / 100.0
+        cleaned.append({
+            "position": position,
+            "model": model,
+            "description": description,
+            "gst_percent": line_gst,
+            "qty": qty,
+            "rate": rate,
+            "amount": amount,
+        })
+    subtotal = round(subtotal, 2)
+    gst_amount = round(gst_amount, 2)
+    grand_total = round(subtotal + gst_amount, 2)
+    balance = round(grand_total - as_float(advance), 2)
+    return cleaned, subtotal, gst_amount, grand_total, balance
+
+
+def load_quote(conn, quote_id):
+    quote = conn.execute("SELECT * FROM quotes WHERE id = ?", (quote_id,)).fetchone()
+    if not quote:
+        return None
+    quote = dict(quote)
+    quote["items"] = rows_to_dicts(conn.execute(
+        "SELECT * FROM quote_items WHERE quote_id = ? ORDER BY position",
+        (quote_id,)).fetchall())
+    company = conn.execute(
+        "SELECT * FROM companies WHERE id = ?", (quote["company_id"],)).fetchone()
+    quote["company"] = dict(company) if company else {}
+    return quote
+
+
+@app.get("/api/quotes")
+def list_quotes():
+    query = (request.args.get("q") or "").strip()
+    limit = min(int(request.args.get("limit", 50)), 200)
+    conn = get_db()
+    if query:
+        like = f"%{query}%"
+        rows = conn.execute(
+            """SELECT q.*, c.name AS company_name FROM quotes q
+               LEFT JOIN companies c ON c.id = q.company_id
+               WHERE q.party_name LIKE ? OR q.quote_no LIKE ?
+               ORDER BY q.id DESC LIMIT ?""",
+            (like, like, limit)).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT q.*, c.name AS company_name FROM quotes q
+               LEFT JOIN companies c ON c.id = q.company_id
+               ORDER BY q.id DESC LIMIT ?""", (limit,)).fetchall()
+    conn.close()
+    return jsonify(rows_to_dicts(rows))
+
+
+@app.get("/api/quotes/<int:quote_id>")
+def read_quote(quote_id):
+    conn = get_db()
+    quote = load_quote(conn, quote_id)
+    conn.close()
+    if not quote:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify(quote)
+
+
+def persist_quote(data, quote_id=None):
+    gst_percent = as_float(data.get("gst_percent"), 18)
+    advance = as_float(data.get("advance"))
+    items, subtotal, gst_amount, grand_total, balance = compute_totals(
+        data.get("items", []), gst_percent, advance)
+
+    quote_date = data.get("quote_date") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    fields = (
+        data.get("quote_no", ""), quote_date, data.get("company_id"),
+        data.get("client_id"), data.get("party_name", ""),
+        data.get("party_address", ""), data.get("salesperson", ""),
+        data.get("salesperson_phone", ""),
+        data.get("order_status", "PENDING"), data.get("dispatch", "PENDING"),
+        advance, gst_percent, data.get("terms", ""),
+        subtotal, gst_amount, grand_total, balance,
+    )
+
+    conn = get_db()
+    if quote_id:
+        conn.execute(
+            """UPDATE quotes SET quote_no = ?, quote_date = ?, company_id = ?,
+                   client_id = ?, party_name = ?, party_address = ?, salesperson = ?,
+                   salesperson_phone = ?, order_status = ?, dispatch = ?, advance = ?,
+                   gst_percent = ?, terms = ?, subtotal = ?, gst_amount = ?,
+                   grand_total = ?, balance = ?, updated_at = ?
+               WHERE id = ?""", fields + (now(), quote_id))
+        conn.execute("DELETE FROM quote_items WHERE quote_id = ?", (quote_id,))
+    else:
+        cur = conn.execute(
+            """INSERT INTO quotes (quote_no, quote_date, company_id, client_id,
+                   party_name, party_address, salesperson, salesperson_phone,
+                   order_status, dispatch, advance, gst_percent, terms, subtotal,
+                   gst_amount, grand_total, balance, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            fields + (now(), now()))
+        quote_id = cur.lastrowid
+
+    for item in items:
+        conn.execute(
+            """INSERT INTO quote_items
+               (quote_id, position, model, description, gst_percent, qty, rate, amount)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (quote_id, item["position"], item["model"], item["description"],
+             item["gst_percent"], item["qty"], item["rate"], item["amount"]))
+
+    conn.commit()
+    quote = load_quote(conn, quote_id)
+    conn.close()
+    return quote
+
+
+@app.post("/api/quotes")
+def create_quote():
+    data = request.get_json(force=True)
+    if not data.get("party_name"):
+        return jsonify({"error": "Select a party first"}), 400
+    if not data.get("company_id"):
+        return jsonify({"error": "Select which of your companies is quoting"}), 400
+    return jsonify(persist_quote(data)), 201
+
+
+@app.put("/api/quotes/<int:quote_id>")
+def edit_quote(quote_id):
+    data = request.get_json(force=True)
+    conn = get_db()
+    exists = conn.execute("SELECT 1 FROM quotes WHERE id = ?", (quote_id,)).fetchone()
+    conn.close()
+    if not exists:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify(persist_quote(data, quote_id))
+
+
+@app.delete("/api/quotes/<int:quote_id>")
+def delete_quote(quote_id):
+    conn = get_db()
+    conn.execute("DELETE FROM quote_items WHERE quote_id = ?", (quote_id,))
+    conn.execute("DELETE FROM quotes WHERE id = ?", (quote_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({"deleted": quote_id})
+
+
+def render_quote_files(quote, want_pdf=False):
+    """Write the .xlsx (and optionally the .pdf) for `quote` into instance/output."""
+    payload = dict(quote)
+    try:
+        payload["quote_date"] = datetime.strptime(
+            quote["quote_date"], "%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        payload["quote_date"] = datetime.now()
+
+    filename = build_filename(payload)
+    xlsx_path = os.path.join(OUTPUT_DIR, f"{quote['id']:05d}_{filename}")
+    generate_quote_xlsx(payload, xlsx_path)
+
+    pdf_path = xlsx_to_pdf(xlsx_path) if want_pdf else None
+    return xlsx_path, pdf_path, filename
+
+
+@app.post("/api/quotes/<int:quote_id>/generate")
+def generate(quote_id):
+    want_pdf = bool((request.get_json(silent=True) or {}).get("pdf"))
+    conn = get_db()
+    quote = load_quote(conn, quote_id)
+    if not quote:
+        conn.close()
+        return jsonify({"error": "Not found"}), 404
+    xlsx_path, pdf_path, filename = render_quote_files(quote, want_pdf)
+    conn.execute("UPDATE quotes SET file_name = ? WHERE id = ?",
+                 (os.path.basename(xlsx_path), quote_id))
+    conn.commit()
+    conn.close()
+    return jsonify({
+        "file_name": filename,
+        "xlsx_url": f"/api/quotes/{quote_id}/download?fmt=xlsx",
+        "pdf_url": f"/api/quotes/{quote_id}/download?fmt=pdf" if pdf_path else None,
+    })
+
+
+@app.get("/api/quotes/<int:quote_id>/download")
+def download(quote_id):
+    fmt = request.args.get("fmt", "xlsx")
+    conn = get_db()
+    quote = load_quote(conn, quote_id)
+    conn.close()
+    if not quote:
+        return jsonify({"error": "Not found"}), 404
+
+    xlsx_path, pdf_path, filename = render_quote_files(quote, want_pdf=(fmt == "pdf"))
+    if fmt == "pdf":
+        if not pdf_path:
+            return jsonify({"error": "PDF conversion needs LibreOffice installed"}), 503
+        return send_file(pdf_path, as_attachment=True,
+                         download_name=os.path.splitext(filename)[0] + ".pdf")
+    return send_file(xlsx_path, as_attachment=True, download_name=filename)
+
+
+@app.get("/api/quotes/<int:quote_id>/print")
+def print_view(quote_id):
+    """A4 HTML view - the browser's Print dialog turns it into a PDF."""
+    conn = get_db()
+    quote = load_quote(conn, quote_id)
+    conn.close()
+    if not quote:
+        return jsonify({"error": "Not found"}), 404
+    return render_print_view(quote)
+
+
+@app.post("/api/quotes/<int:quote_id>/email")
+def email_quote(quote_id):
+    data = request.get_json(force=True) or {}
+    conn = get_db()
+    quote = load_quote(conn, quote_id)
+    conn.close()
+    if not quote:
+        return jsonify({"error": "Not found"}), 404
+
+    recipients = [a.strip() for a in (data.get("to") or "").replace(";", ",").split(",")
+                  if a.strip()]
+    if not recipients:
+        return jsonify({"error": "No recipient e-mail address"}), 400
+
+    want_pdf = bool(data.get("pdf", True))
+    xlsx_path, pdf_path, filename = render_quote_files(quote, want_pdf)
+    attachments = [xlsx_path] + ([pdf_path] if pdf_path else [])
+
+    company_name = (quote.get("company") or {}).get("name", "")
+    subject = data.get("subject") or f"QUOTATION - {quote['party_name']} - {company_name}"
+    body = data.get("body") or (
+        f"Dear Sir/Madam,\n\nPlease find attached our quotation "
+        f"({os.path.splitext(filename)[0]}).\n\n"
+        f"Regards,\n{quote.get('salesperson', '')}\n{company_name}\n"
+        f"{quote.get('salesperson_phone', '')}")
+
+    try:
+        sent_to = send_quote(recipients, subject, body, attachments)
+    except MailNotConfigured as exc:
+        return jsonify({"error": str(exc)}), 503
+    except Exception as exc:  # network / auth problems surface to the UI
+        return jsonify({"error": f"Could not send: {exc}"}), 502
+    return jsonify({"sent_to": sent_to, "attachments": [os.path.basename(a)
+                                                        for a in attachments]})
+
+
+def create_app():
+    init_db()
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    return app
+
+
+if __name__ == "__main__":
+    create_app().run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
