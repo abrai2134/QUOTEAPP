@@ -284,6 +284,7 @@ function newQuote() {
   $('#fPaymentStatus').value = 'PENDING';
   $('#fDispatchQty').value = 0;
   $('#fReminder').value = defaultReminder();
+  applyRememberedUser();
   $('#fFollow1').value = todayISO();
   $('#fRemarks1').value = '';
   $('#fAdvance').value = 0;
@@ -341,9 +342,22 @@ function renderCompanyPreview() {
 
 $('#fCompany').onchange = renderCompanyPreview;
 
+// Each team member's own device remembers them, so they do not pick their
+// name and number again on every quotation.
+const LAST_USER_KEY = 'quoteapp.salesperson';
+
+function rememberUser(name) {
+  try { localStorage.setItem(LAST_USER_KEY, name || ''); } catch (_) { /* private mode */ }
+}
+
+function lastUser() {
+  try { return localStorage.getItem(LAST_USER_KEY) || ''; } catch (_) { return ''; }
+}
+
 $('#fSalesperson').onchange = () => {
   const person = state.salespersons.find((s) => s.name === $('#fSalesperson').value);
   if (person && person.phone) $('#fSalesPhone').value = person.phone;
+  rememberUser($('#fSalesperson').value);
 };
 
 /* --- party picker --- */
@@ -884,6 +898,9 @@ $('#btnSyncPending').onclick = async (e) => {
 };
 
 $('#btnMirror').onclick = () => { window.location = '/api/order-items.csv'; };
+$('#btnExportParties').onclick = () => { window.location = '/api/export/clients.csv'; };
+$('#btnExportMachines').onclick = () => { window.location = '/api/export/machines.csv'; };
+$('#btnExportTeam').onclick = () => { window.location = '/api/export/team.csv'; };
 
 $('#btnAddSales').onclick = async () => {
   const name = $('#newSalesName').value.trim();
@@ -945,6 +962,17 @@ async function bootstrapLists() {
   const salesSelect = $('#fSalesperson');
   salesSelect.innerHTML = '<option value=""></option>' + salespersons
     .map((s) => `<option value="${escapeAttr(s.name)}">${escapeHtml(s.name)}</option>`).join('');
+
+  // Restore only once the options exist, or there is nothing to select.
+  applyRememberedUser();
+}
+
+function applyRememberedUser() {
+  const me = lastUser();
+  if (!me || !state.salespersons.some((p) => p.name === me)) return;
+  $('#fSalesperson').value = me;
+  const person = state.salespersons.find((p) => p.name === me);
+  if (person && person.phone) $('#fSalesPhone').value = person.phone;
 }
 
 (async function boot() {

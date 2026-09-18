@@ -19,6 +19,10 @@ limit, and your client list never leaves your computer.
 | **Machines** | All **628** models with live rates; tap to edit a rate, or **+ Add a new machine** |
 | **Setup** | Google Sheet sync, default terms, salespersons, bank details, e-mail |
 
+Each person picks their own name under **Prepared by**; their device remembers
+it, so their name and number are filled in on every later quotation and land in
+the **Made By** column of the sheet.
+
 Every quotation you save is also written into your **Order items** Google Sheet,
 in the same 75 columns AppSheet used — see *Recording quotations in your Google
 Sheet* below.
@@ -57,6 +61,11 @@ seconds). Then open **<http://localhost:5000>** in your browser.
 `192.168.1.14`) and open `http://192.168.1.14:5000` on the phone while both are
 on the same Wi-Fi. On an iPhone, tap Share → *Add to Home Screen* and it behaves
 like the AppSheet app did.
+
+**To give the whole team a link**, see **[DEPLOY.md](DEPLOY.md)** — one hosted
+copy of the app means every quotation anybody raises goes into your Order items
+sheet by itself. Set `QUOTEAPP_PIN` in `.env` first; the app then asks for that
+PIN once per device.
 
 ---
 

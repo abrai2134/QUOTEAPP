@@ -1,9 +1,15 @@
 """Flask backend for the Well Worth quotation app."""
 
+import csv
+import io
 import os
 from datetime import datetime
 
-from flask import Flask, jsonify, request, send_file, send_from_directory
+from datetime import timedelta
+
+from flask import Flask, jsonify, redirect, request, send_file, send_from_directory
+
+from . import auth
 
 from .db import DEFAULT_TERMS, INSTANCE_DIR, get_db, get_setting, init_db, now, set_setting
 from .mailer import MailNotConfigured, is_configured as mail_configured, send_quote
@@ -16,6 +22,55 @@ from .quote_xlsx import build_filename, generate_quote_xlsx, xlsx_to_pdf
 OUTPUT_DIR = os.path.join(INSTANCE_DIR, "output")
 
 app = Flask(__name__, static_folder="static", static_url_path="")
+app.secret_key = auth.secret_key()
+app.permanent_session_lifetime = timedelta(days=30)
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    # Set QUOTEAPP_HTTPS=1 when the app is served over https (any hosted setup),
+    # so the session cookie is never sent over a plain connection.
+    SESSION_COOKIE_SECURE=os.environ.get("QUOTEAPP_HTTPS", "") == "1",
+)
+
+
+@app.before_request
+def _gate():
+    return auth.require_pin()
+
+
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+
+@app.get("/login")
+def login_form():
+    if not auth.is_enabled():
+        return redirect("/")
+    return auth.login_page()
+
+
+@app.post("/login")
+def login_submit():
+    if not auth.is_enabled():
+        return redirect("/")
+    wait = auth.locked_out()
+    if wait:
+        return auth.login_page(
+            f"Too many wrong attempts. Try again in {wait // 60 + 1} minute(s)."), 429
+    if auth.check_pin(request.form.get("pin")):
+        auth.note_success()
+        auth.sign_in()
+        return redirect("/")
+    auth.note_failure()
+    return auth.login_page("That PIN is not right."), 401
+
+
+@app.post("/logout")
+def logout():
+    from flask import session
+    session.clear()
+    return redirect("/login")
 
 
 def rows_to_dicts(rows):
@@ -619,6 +674,49 @@ def sheet_test():
                                f"{result.get('row')} - delete it when you like."})
 
 
+# Column names match the CSV exports the databases came from, so a file
+# downloaded here can be re-imported with `python -m app.seed --force`.
+EXPORTS = {
+    "clients": ("CLIENT DATA BASE",
+                ["PARTY", "PARTY ADD", "PARTY ADD2", "CITY", "CELL NO", "CELLNO2",
+                 "EMAILID", "EMAILID2", "GST NO", "REMARKS", "ENTRY BY"],
+                "SELECT party, address, address2, city, cell_no, cell_no2, email, "
+                "email2, gst_no, remarks, entry_by FROM clients ORDER BY party"),
+    "machines": ("MACHINE DATA",
+                 ["MODEL1", "MACHINE1", "RATE1", "ENTRY BY"],
+                 "SELECT model, description, rate, entry_by FROM machines "
+                 "WHERE is_active = 1 ORDER BY model"),
+    "team": ("TEAM",
+             ["NAME", "CONTACT NO", "EMAIL"],
+             "SELECT name, phone, email FROM salespersons WHERE is_active = 1 "
+             "ORDER BY name"),
+}
+
+
+@app.get("/api/export/<table>.csv")
+def export_table(table):
+    """Download a master table as CSV."""
+    spec = EXPORTS.get(table)
+    if not spec:
+        return jsonify({"error": "Unknown table"}), 404
+    name, headers, query = spec
+
+    conn = get_db()
+    rows = conn.execute(query).fetchall()
+    conn.close()
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(headers)
+    for row in rows:
+        writer.writerow(["" if v is None else v for v in tuple(row)])
+
+    data = buffer.getvalue().encode("utf-8-sig")   # BOM keeps Excel happy
+    today = datetime.now().strftime("%Y-%m-%d")
+    return send_file(io.BytesIO(data), mimetype="text/csv", as_attachment=True,
+                     download_name=f"{name} {today}.csv")
+
+
 @app.get("/api/order-items.csv")
 def download_mirror():
     """The local copy of every row that was built for the sheet."""
@@ -670,4 +768,6 @@ def create_app():
 
 
 if __name__ == "__main__":
-    create_app().run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
+    create_app().run(host=os.environ.get("HOST", "0.0.0.0"),
+                     port=int(os.environ.get("PORT", 5000)),
+                     debug=False, threaded=True)
