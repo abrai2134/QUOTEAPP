@@ -24,7 +24,7 @@ import urllib.request
 import uuid
 from datetime import datetime
 
-from .db import INSTANCE_DIR, get_setting, now
+from .db import INSTANCE_DIR, get_setting, now, to_local
 
 MIRROR_PATH = os.path.join(INSTANCE_DIR, "order_items.csv")
 ITEM_SLOTS = 7
@@ -259,6 +259,31 @@ def sync_quote(quote, timeout=None):
     return True, f"Added to the Order items sheet at {now()}."
 
 
+def sheet_health():
+    """The script's health check: file name, tabs, and the timezone it reads
+    and writes dates in."""
+    url = sheet_url()
+    if not url:
+        raise RuntimeError("No Google Sheet is connected yet.")
+    try:
+        with urllib.request.urlopen(url, timeout=SYNC_TIMEOUT) as response:
+            body = response.read().decode("utf-8", "replace").strip()
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"The sheet refused the request (HTTP {exc.code}).") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not reach the sheet: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise RuntimeError(
+            f"The sheet did not answer within {SYNC_TIMEOUT} seconds.") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Could not reach the sheet: {exc}") from exc
+    try:
+        return json.loads(body)
+    except ValueError:
+        raise RuntimeError("The sheet replied with a sign-in page. Re-deploy the "
+                           "Apps Script with 'Who has access: Anyone'.")
+
+
 def fetch_rows(limit=500):
     """Read the most recent Order items rows back out of the sheet.
 
@@ -366,10 +391,25 @@ def row_to_quote(row):
 
 
 def _sheet_datetime(value):
-    """Sheet dates come back as ISO text; store them the way the app does."""
+    """Sheet dates come back as ISO text; store them the way the app does.
+
+    Apps Script hands over a Date as an instant in UTC, so a row raised at ten
+    at night in Mumbai arrives stamped half past four that afternoon - or, when
+    the spreadsheet itself is set to another country, the following morning.
+    The instant is converted to the business's own timezone before it is
+    stored, so the list reads and sorts the way the day actually ran.
+    """
     if not value:
         return ""
-    parsed = _parse(str(value)[:19].replace("Z", ""))
-    if parsed:
-        return parsed.strftime("%Y-%m-%d %H:%M:%S")
-    return str(value).strip()
+    text = str(value).strip()
+
+    # fromisoformat reads the offset when there is one, so an instant that
+    # already names its zone is never shifted twice.
+    iso = text[:-1] + "+00:00" if text.endswith("Z") else text
+    try:
+        parsed = datetime.fromisoformat(iso)
+    except ValueError:
+        parsed = _parse(text[:19].replace("Z", ""))
+    if not parsed:
+        return text
+    return to_local(parsed).strftime("%Y-%m-%d %H:%M:%S")

@@ -80,6 +80,10 @@ function doGet(e) {
         message: 'Well Worth quote sync is running.',
         file: book.getName(),
         tabs: book.getSheets().map(function (s) { return s.getName(); }),
+        // Dates are written and read in this timezone.  If it is not India,
+        // every quotation lands in the sheet at the wrong time of day, so the
+        // app checks it and says so.
+        timezone: book.getSpreadsheetTimeZone(),
       });
     }
     if (SHARED_SECRET && params.secret !== SHARED_SECRET) {

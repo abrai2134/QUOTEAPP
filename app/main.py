@@ -13,13 +13,14 @@ from werkzeug.exceptions import HTTPException
 
 from . import auth
 
-from .db import (DEFAULT_TERMS, INSTANCE_DIR, get_db, get_setting, init_db, now,
-                 set_setting, squeeze)
+from .db import (DEFAULT_TERMS, INSTANCE_DIR, TIMEZONE, get_db, get_setting,
+                 init_db, local_now, now, set_setting, squeeze)
 from .mailer import MailNotConfigured, is_configured as mail_configured, send_quote
 from .order_sheet import (COLUMNS as SHEET_COLUMNS, HEADINGS, MIRROR_PATH,
                           SAVE_TIMEOUT, STD_FILES,
                           build_row, fetch_rows, is_configured as sheet_configured,
-                          new_sheet_id, push_to_sheet, row_to_quote, sheet_url,
+                          new_sheet_id, push_to_sheet, row_to_quote, sheet_health,
+                          sheet_url,
                           sync_quote)
 from .print_view import render as render_print_view
 from .quote_pdf import generate_quote_pdf
@@ -326,7 +327,7 @@ def create_machine():
         "INSERT INTO machines (model, description, rate, entry_by, wed) "
         "VALUES (?, ?, ?, ?, ?)",
         (model, data.get("description", ""), as_float(data.get("rate")),
-         data.get("entry_by", ""), datetime.now().strftime("%m/%d/%Y")),
+         data.get("entry_by", ""), local_now().strftime("%m/%d/%Y")),
     )
     conn.commit()
     row = conn.execute("SELECT * FROM machines WHERE id = ?", (cur.lastrowid,)).fetchone()
@@ -500,7 +501,7 @@ def persist_quote(data, quote_id=None):
     items, subtotal, gst_amount, grand_total, balance = compute_totals(
         data.get("items", []), gst_percent, advance)
 
-    quote_date = data.get("quote_date") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    quote_date = data.get("quote_date") or now()
     fields = (
         data.get("quote_no", ""), quote_date,
         data.get("heading") or "QUOTATION", data.get("std_file") or "NON STD FILE",
@@ -617,7 +618,7 @@ def render_quote_files(quote, want_pdf=False):
         payload["quote_date"] = datetime.strptime(
             quote["quote_date"], "%Y-%m-%d %H:%M:%S")
     except (ValueError, TypeError):
-        payload["quote_date"] = datetime.now()
+        payload["quote_date"] = local_now().replace(tzinfo=None)
 
     filename = build_filename(payload)
     xlsx_path = os.path.join(OUTPUT_DIR, f"{quote['id']:05d}_{filename}")
@@ -821,11 +822,22 @@ def sheet_test():
     if not sheet_configured():
         return jsonify({"ok": False, "error": "Paste the web app URL first."}), 400
     try:
+        health = sheet_health()
         fetch_rows(limit=1)
     except RuntimeError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 502
-    return jsonify({"ok": True,
-                    "message": "Sheet is connected. Nothing was written to it."})
+
+    message = "Sheet is connected. Nothing was written to it."
+    if health.get("file"):
+        message += f" File: {health['file']}."
+    # Google reads and writes the dates in the spreadsheet's own timezone, so a
+    # sheet set to another country stamps every quotation at the wrong time.
+    zone = health.get("timezone")
+    if zone and zone != TIMEZONE:
+        message += (f" Warning: the sheet's timezone is {zone}, not {TIMEZONE} - "
+                    "quotation dates will be hours out. Change it in the sheet "
+                    "under File > Settings > Time zone.")
+    return jsonify({"ok": True, "message": message, "timezone": zone})
 
 
 # Column names match the CSV exports the databases came from, so a file
@@ -866,7 +878,7 @@ def export_table(table):
         writer.writerow(["" if v is None else v for v in tuple(row)])
 
     data = buffer.getvalue().encode("utf-8-sig")   # BOM keeps Excel happy
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = local_now().strftime("%Y-%m-%d")
     return send_file(io.BytesIO(data), mimetype="text/csv", as_attachment=True,
                      download_name=f"{name} {today}.csv")
 

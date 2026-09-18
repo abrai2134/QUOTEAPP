@@ -8,7 +8,7 @@ quotation raised through the app.
 import os
 import re
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INSTANCE_DIR = os.path.join(BASE_DIR, "instance")
@@ -234,5 +234,37 @@ def set_setting(key, value):
     conn.close()
 
 
+# Every timestamp is India time, whatever the machine thinks it is.  A hosted
+# server runs on UTC, which put quotations five and a half hours out and sorted
+# "Newest first" wrongly; the clock the business works to should not depend on
+# where the app happens to be running.  Set QUOTEAPP_TZ to change it.
+TIMEZONE = os.environ.get("QUOTEAPP_TZ", "Asia/Kolkata")
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _zone():
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(TIMEZONE)
+    except Exception:            # no tzdata on the host - fall back to +05:30
+        return IST
+
+
+LOCAL_TZ = _zone()
+
+
+def local_now():
+    """Right now, as an aware datetime in the business's own timezone."""
+    return datetime.now(LOCAL_TZ)
+
+
+def to_local(value):
+    """Move an aware datetime into the business's timezone.  A naive one is
+    assumed to already be local and is handed back unchanged."""
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(LOCAL_TZ)
+
+
 def now():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return local_now().strftime("%Y-%m-%d %H:%M:%S")
