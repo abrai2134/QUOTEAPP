@@ -53,11 +53,19 @@ Common causes:
 
 - *The sheet replied with a sign-in page* — the deployment's access is not set
   to **Anyone**. Redeploy with that setting.
-- *No sheet named "Order items"* — rename the tab, or change `SHEET_NAME` at
-  the top of `Code.gs`.
+- *No tab named "Order items"* — the message lists the tab names the file
+  actually has. Rename your tab to match, or change `SHEET_NAME` at the top of
+  `Code.gs` to one of those names. A file with only one tab is used as-is, so
+  this only comes up when there are several.
 - You changed the script after deploying — Apps Script keeps serving the old
   version until you do **Deploy → Manage deployments → Edit → Version: New
   version → Deploy**.
+
+## Checking what the script can see
+
+Open the web app URL in a browser. It answers with the file name and the list
+of tab names it found, which is the quickest way to confirm you deployed the
+script into the sheet you meant.
 
 ## Changing the columns
 

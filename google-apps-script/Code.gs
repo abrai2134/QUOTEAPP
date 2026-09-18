@@ -13,8 +13,23 @@
 // same word into the app under Setup.
 var SHARED_SECRET = '';
 
-// The tab the rows are appended to.
+// The tab the rows are appended to.  If your tab has another name, either
+// change it here or just leave it - when the file has only one tab, that one
+// is used, and any other mismatch reports the tab names it did find.
 var SHEET_NAME = 'Order items';
+
+/** Find the tab to work on, and say what is there when it cannot be found. */
+function pickSheet(book) {
+  var sheet = book.getSheetByName(SHEET_NAME);
+  if (sheet) return sheet;
+
+  var sheets = book.getSheets();
+  if (sheets.length === 1) return sheets[0];
+
+  var names = sheets.map(function (s) { return '"' + s.getName() + '"'; }).join(', ');
+  throw new Error('No tab named "' + SHEET_NAME + '". This file has: ' + names +
+                  '. Rename the tab, or change SHEET_NAME at the top of the script.');
+}
 
 function doPost(e) {
   try {
@@ -24,11 +39,7 @@ function doPost(e) {
       return reply({ ok: false, error: 'Wrong secret word.' });
     }
 
-    var book = SpreadsheetApp.getActiveSpreadsheet();
-    var sheet = book.getSheetByName(SHEET_NAME);
-    if (!sheet) {
-      return reply({ ok: false, error: 'No sheet named "' + SHEET_NAME + '" in this file.' });
-    }
+    var sheet = pickSheet(SpreadsheetApp.getActiveSpreadsheet());
 
     // Match on the sheet's own header row, so the app never depends on column
     // order and extra columns you add by hand are left untouched.
@@ -63,16 +74,19 @@ function doGet(e) {
   try {
     var params = (e && e.parameter) || {};
     if (params.action !== 'rows') {
-      return reply({ ok: true, message: 'Well Worth quote sync is running.' });
+      var book = SpreadsheetApp.getActiveSpreadsheet();
+      return reply({
+        ok: true,
+        message: 'Well Worth quote sync is running.',
+        file: book.getName(),
+        tabs: book.getSheets().map(function (s) { return s.getName(); }),
+      });
     }
     if (SHARED_SECRET && params.secret !== SHARED_SECRET) {
       return reply({ ok: false, error: 'Wrong secret word.' });
     }
 
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
-    if (!sheet) {
-      return reply({ ok: false, error: 'No sheet named "' + SHEET_NAME + '" in this file.' });
-    }
+    var sheet = pickSheet(SpreadsheetApp.getActiveSpreadsheet());
 
     var lastRow = sheet.getLastRow();
     var lastCol = sheet.getLastColumn();
