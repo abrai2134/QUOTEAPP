@@ -57,7 +57,7 @@ function doPost(e) {
     });
 
     sheet.appendRow(values);
-    return reply({ ok: true, row: sheet.getLastRow(), id: row.ID || '' });
+    return reply({ ok: true, via: 'doPost', row: sheet.getLastRow(), id: row.ID || '' });
   } catch (err) {
     return reply({ ok: false, error: String(err) });
   }

@@ -28,7 +28,11 @@ from .db import INSTANCE_DIR, get_setting, now
 
 MIRROR_PATH = os.path.join(INSTANCE_DIR, "order_items.csv")
 ITEM_SLOTS = 7
-SYNC_TIMEOUT = 30
+SYNC_TIMEOUT = 20
+# Saving a quotation waits less than a batch does: the row is already in the
+# local mirror by then, so there is nothing to gain by making somebody stare at
+# a phone while Apps Script wakes up.  It syncs from Setup afterwards.
+SAVE_TIMEOUT = 8
 
 # The trailing spaces in some of these names are part of the sheet's own
 # headers - they must be reproduced exactly or the Apps Script cannot match
@@ -177,7 +181,7 @@ def is_configured():
     return bool(sheet_url())
 
 
-def push_to_sheet(row):
+def push_to_sheet(row, timeout=None):
     """POST one row to the Apps Script web app.
 
     Returns the parsed response.  Raises RuntimeError with a message meant for
@@ -198,7 +202,7 @@ def push_to_sheet(row):
         url, data=payload,
         headers={"Content-Type": "application/json"}, method="POST")
     try:
-        with urllib.request.urlopen(request, timeout=SYNC_TIMEOUT) as response:
+        with urllib.request.urlopen(request, timeout=timeout or SYNC_TIMEOUT) as response:
             body = response.read().decode("utf-8", "replace").strip()
     except urllib.error.HTTPError as exc:
         raise RuntimeError(f"The sheet refused the row (HTTP {exc.code}). "
@@ -206,19 +210,36 @@ def push_to_sheet(row):
                            "to 'Anyone'.") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Could not reach the sheet: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise RuntimeError(
+            f"The sheet did not answer within {timeout or SYNC_TIMEOUT} seconds. "
+            "Google Apps Script is slow or asleep - the quotation is saved, use "
+            "Sync all pending under Setup in a minute.") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Could not reach the sheet: {exc}") from exc
 
     try:
         result = json.loads(body)
     except ValueError:
         # A Google sign-in page instead of JSON means the deployment is private.
-        raise RuntimeError("The sheet replied with a sign-in page. Re-deploy "
-                           "the Apps Script with 'Who has access: Anyone'.")
+        raise RuntimeError("The sheet replied with a sign-in page instead of a "
+                           "result. Re-deploy the Apps Script with "
+                           "'Who has access: Anyone'.")
     if not result.get("ok"):
         raise RuntimeError(result.get("error") or "The sheet rejected the row.")
+    # doPost always reports the row number it wrote.  A reply without one is the
+    # health check doGet serves, which means the POST never reached doPost -
+    # counting that as success would mark the quotation synced and quietly lose
+    # the row.  Better to fail loudly and keep it in the pending list.
+    if not result.get("row") and result.get("via") != "doPost":
+        raise RuntimeError(
+            "The sheet answered its health check instead of adding the row, so "
+            "nothing was written. Re-deploy the Apps Script: Deploy > Manage "
+            "deployments > edit > Version: New version.")
     return result
 
 
-def sync_quote(quote):
+def sync_quote(quote, timeout=None):
     """Mirror locally, then push to the sheet when one is connected.
 
     Returns (synced, message).  A failed push is never fatal: the row is always
@@ -229,9 +250,12 @@ def sync_quote(quote):
     if not is_configured():
         return False, "Saved locally. Connect a Google Sheet under Setup to sync."
     try:
-        push_to_sheet(row)
-    except RuntimeError as exc:
-        return False, str(exc)
+        push_to_sheet(row, timeout=timeout)
+    except Exception as exc:                      # noqa: BLE001
+        # Whatever went wrong, the row is already in the local mirror and the
+        # quotation is safe.  Returning the reason beats a 500 page, which the
+        # screens cannot read and which tells nobody anything.
+        return False, str(exc) or exc.__class__.__name__
     return True, f"Added to the Order items sheet at {now()}."
 
 
@@ -257,12 +281,19 @@ def fetch_rows(limit=500):
         raise RuntimeError(f"The sheet refused the request (HTTP {exc.code}).") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Could not reach the sheet: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise RuntimeError(
+            f"The sheet did not answer within {SYNC_TIMEOUT} seconds. Google "
+            "Apps Script is slow or asleep - try again in a minute.") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Could not reach the sheet: {exc}") from exc
 
     try:
         result = json.loads(body)
     except ValueError:
-        raise RuntimeError("The sheet replied with a sign-in page. Re-deploy the "
-                           "Apps Script with 'Who has access: Anyone'.")
+        raise RuntimeError("The sheet replied with a sign-in page instead of "
+                           "rows. Re-deploy the Apps Script with "
+                           "'Who has access: Anyone'.")
     if not result.get("ok"):
         raise RuntimeError(result.get("error") or "The sheet refused the request.")
     rows = result.get("rows") or []

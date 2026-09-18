@@ -3,18 +3,21 @@
 import csv
 import io
 import os
+import time
 from datetime import datetime
 
 from datetime import timedelta
 
 from flask import Flask, jsonify, redirect, request, send_file, send_from_directory
+from werkzeug.exceptions import HTTPException
 
 from . import auth
 
 from .db import (DEFAULT_TERMS, INSTANCE_DIR, get_db, get_setting, init_db, now,
                  set_setting, squeeze)
 from .mailer import MailNotConfigured, is_configured as mail_configured, send_quote
-from .order_sheet import (COLUMNS as SHEET_COLUMNS, HEADINGS, MIRROR_PATH, STD_FILES,
+from .order_sheet import (COLUMNS as SHEET_COLUMNS, HEADINGS, MIRROR_PATH,
+                          SAVE_TIMEOUT, STD_FILES,
                           build_row, fetch_rows, is_configured as sheet_configured,
                           new_sheet_id, push_to_sheet, row_to_quote, sheet_url,
                           sync_quote)
@@ -39,6 +42,20 @@ app.config.update(
 @app.before_request
 def _gate():
     return auth.require_pin()
+
+
+@app.errorhandler(Exception)
+def _api_errors_stay_json(exc):
+    """The screens read every reply as JSON, so an /api/ route must never hand
+    back an HTML error page - that used to surface as an unreadable
+    "Unexpected token '<'" and hid whatever had actually gone wrong."""
+    status = exc.code if isinstance(exc, HTTPException) else 500
+    if not request.path.startswith("/api/"):
+        return exc if isinstance(exc, HTTPException) else ("Server error", 500)
+    if isinstance(exc, HTTPException):
+        return jsonify({"error": exc.description}), status
+    app.logger.exception("Unhandled error on %s", request.path)
+    return jsonify({"error": f"{exc.__class__.__name__}: {exc}"}), 500
 
 
 @app.get("/health")
@@ -352,6 +369,11 @@ def read_settings():
     pending = conn.execute(
         "SELECT COUNT(*) AS n FROM quotes WHERE COALESCE(synced_at, '') = ''"
     ).fetchone()["n"]
+    # Why the last one did not get through, so Setup can say so instead of
+    # leaving the reason in a toast that has already gone.
+    last = conn.execute(
+        "SELECT sync_error FROM quotes WHERE COALESCE(sync_error, '') <> '' "
+        "ORDER BY id DESC LIMIT 1").fetchone()
     conn.close()
     return jsonify({
         "default_terms": get_setting("default_terms", DEFAULT_TERMS),
@@ -361,6 +383,7 @@ def read_settings():
         "sheet_secret": get_setting("sheet_secret", ""),
         "sheet_configured": sheet_configured(),
         "pending_sync": pending,
+        "last_sync_error": last["sync_error"] if last else "",
         "headings": HEADINGS,
         "std_files": STD_FILES,
     })
@@ -547,7 +570,7 @@ def save_and_sync(data, quote_id=None):
     in the local mirror and the quote is listed as not synced.
     """
     quote = persist_quote(data, quote_id)
-    synced, message = sync_quote(quote)
+    synced, message = sync_quote(quote, timeout=SAVE_TIMEOUT)
     conn = get_db()
     record_sync(conn, quote["id"], synced, message)
     conn.close()
@@ -684,14 +707,24 @@ def sync_one(quote_id):
     return jsonify({"synced": False, "error": message}), 502
 
 
+# A hosted app sits behind a gateway that gives up on a request after a minute
+# or so and answers with its own error page.  Pushing many rows to Apps Script
+# can easily take longer than that, so a batch stops while there is still time
+# to reply properly and says how many are left; pressing again carries on.
+SYNC_BUDGET = 40.0
+
+
 @app.post("/api/sync-pending")
 def sync_pending():
-    """Push every quotation that has not reached the sheet yet."""
+    """Push quotations that have not reached the sheet yet, within a time budget."""
+    started = time.monotonic()
     conn = get_db()
     ids = [r["id"] for r in conn.execute(
         "SELECT id FROM quotes WHERE COALESCE(synced_at, '') = '' ORDER BY id")]
     done, failed, last_error = 0, 0, ""
-    for quote_id in ids:
+    for position, quote_id in enumerate(ids):
+        if position and time.monotonic() - started > SYNC_BUDGET:
+            break
         quote = load_quote(conn, quote_id)
         synced, message = sync_quote(quote)
         record_sync(conn, quote_id, synced, message)
@@ -700,8 +733,10 @@ def sync_pending():
         else:
             failed += 1
             last_error = message
+    remaining = len(ids) - done - failed
     conn.close()
-    return jsonify({"synced": done, "failed": failed, "error": last_error})
+    return jsonify({"synced": done, "failed": failed, "remaining": remaining,
+                    "error": last_error})
 
 
 def pull_from_sheet(limit=500):

@@ -210,6 +210,12 @@ table.items .model { font-size: 11.5px; color: var(--muted); font-weight: 700; }
 .sheet-row .s { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.4; }
 .sheet-row .r { float: right; font-weight: 700; color: var(--accent); font-size: 13.5px; }
 
+/* the reason the last sheet sync failed, kept on screen */
+.sync-error {
+  background: #fde8e6; color: var(--danger); border-radius: 8px;
+  padding: 9px 11px; font-weight: 600;
+}
+
 /* ---------------- toast ---------------- */
 .toast {
   position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%);

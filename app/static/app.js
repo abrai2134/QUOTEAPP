@@ -30,7 +30,19 @@ async function api(path, options = {}) {
     ...options,
   });
   const text = await res.text();
-  const data = text ? JSON.parse(text) : {};
+  let data = {};
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch (err) {
+      // Not JSON at all: the reply came from something in front of the app -
+      // a gateway that timed out, or a sign-in page. Say so, rather than
+      // repeating the parser's "Unexpected token '<'".
+      throw new Error(res.status === 502 || res.status === 504 || res.status === 503
+        ? `The server took too long to answer (${res.status}). It is still working - wait a moment and try again.`
+        : `The server sent a page instead of a result (${res.status}). You may need to sign in again - pull down to reload.`);
+    }
+  }
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
 }
@@ -791,6 +803,12 @@ function paintSheetStatus() {
     el.textContent = 'Not connected yet. Quotations are still recorded in '
       + 'instance/order_items.csv until you connect the sheet.';
   }
+  // The reason the last one failed, kept on screen - a toast is gone before a
+  // long message can be read.
+  const why = $('#sheetError');
+  const message = state.sheet.pending ? state.sheet.lastError : '';
+  why.textContent = message ? `Last error: ${message}` : '';
+  why.hidden = !message;
 }
 
 async function refreshSettings() {
@@ -803,6 +821,7 @@ async function refreshSettings() {
   state.sheet = {
     url: s.sheet_url || '', secret: s.sheet_secret || '',
     configured: s.sheet_configured, pending: s.pending_sync || 0,
+    lastError: s.last_sync_error || '',
   };
   return s;
 }
@@ -924,9 +943,12 @@ $('#btnSyncPending').onclick = async (e) => {
   btn.textContent = 'Sending…';
   try {
     const res = await api('/api/sync-pending', { method: 'POST' });
+    const left = res.remaining
+      ? ` · ${res.remaining} still to go, press again`
+      : '';
     toast(res.failed
-      ? `${res.synced} sent, ${res.failed} failed · ${res.error}`
-      : `${res.synced} quotation(s) added to the sheet`, Boolean(res.failed));
+      ? `${res.synced} sent, ${res.failed} failed${left} · ${res.error}`
+      : `${res.synced} quotation(s) added to the sheet${left}`, Boolean(res.failed));
     await refreshSettings();
     paintSheetStatus();
     await loadQuotes();
