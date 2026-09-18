@@ -11,7 +11,8 @@ from flask import Flask, jsonify, redirect, request, send_file, send_from_direct
 
 from . import auth
 
-from .db import DEFAULT_TERMS, INSTANCE_DIR, get_db, get_setting, init_db, now, set_setting
+from .db import (DEFAULT_TERMS, INSTANCE_DIR, get_db, get_setting, init_db, now,
+                 set_setting, squeeze)
 from .mailer import MailNotConfigured, is_configured as mail_configured, send_quote
 from .order_sheet import (COLUMNS as SHEET_COLUMNS, HEADINGS, MIRROR_PATH, STD_FILES,
                           build_row, fetch_rows, is_configured as sheet_configured,
@@ -178,15 +179,19 @@ def search_clients():
     order = CLIENT_SORTS.get(request.args.get("sort"), CLIENT_SORTS["name"])
     conn = get_db()
     if query:
-        like = f"%{query}%"
-        # A name that starts with the search text still comes first, then the
-        # chosen order applies within each group.
+        # Punctuation and spacing are ignored on both sides, so "kpsanghvi"
+        # finds K.P. SANGHVI and a phone number typed with or without spaces
+        # finds the same party.  A name that starts with the search text still
+        # comes first, then the chosen order applies within each group.
+        key = squeeze(query)
+        starts, contains = f"{key}%", f"%{key}%"
         rows = conn.execute(
             """SELECT * FROM clients
-               WHERE party LIKE ? OR city LIKE ? OR cell_no LIKE ? OR gst_no LIKE ?
-               ORDER BY CASE WHEN party LIKE ? THEN 0 ELSE 1 END, """ + order + """
+               WHERE squeeze(party) LIKE ? OR squeeze(city) LIKE ?
+                  OR squeeze(cell_no) LIKE ? OR squeeze(gst_no) LIKE ?
+               ORDER BY CASE WHEN squeeze(party) LIKE ? THEN 0 ELSE 1 END, """ + order + """
                LIMIT ?""",
-            (like, like, like, like, f"{query}%", limit),
+            (contains, contains, contains, contains, starts, limit),
         ).fetchall()
     else:
         rows = conn.execute(
@@ -263,13 +268,27 @@ def search_machines():
     limit = min(int(request.args.get("limit", 40)), 200)
     conn = get_db()
     if query:
-        like = f"%{query}%"
+        # Separators are ignored on both sides, so "ft24bk" finds FT~24BK and
+        # "tp150cf" finds TP150~CF.  The model code typed in full wins, then a
+        # code starting with it, then any model containing it, then a
+        # description match - shortest model first inside each group.
+        key = squeeze(query)
+        starts, contains = f"{key}%", f"%{key}%"
         rows = conn.execute(
-            """SELECT * FROM machines
-               WHERE is_active = 1 AND (model LIKE ? OR description LIKE ?)
-               ORDER BY CASE WHEN model LIKE ? THEN 0 ELSE 1 END, model
+            """SELECT * FROM (
+                 SELECT *, CASE WHEN model_code(model) = ?      THEN 0
+                                WHEN model_code(model) LIKE ?   THEN 1
+                                WHEN squeeze(model) LIKE ?      THEN 2
+                                ELSE 3 END AS rank
+                 FROM machines
+                 WHERE is_active = 1
+                   AND (squeeze(model) LIKE ? OR squeeze(description) LIKE ?)
+               )
+               ORDER BY rank,
+                        CASE WHEN rank = 3 THEN 0 ELSE LENGTH(model) END,
+                        model
                LIMIT ?""",
-            (like, like, f"{query}%", limit),
+            (key, starts, contains, contains, contains, limit),
         ).fetchall()
     else:
         rows = conn.execute(

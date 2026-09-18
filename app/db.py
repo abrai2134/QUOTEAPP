@@ -6,6 +6,7 @@ quotation raised through the app.
 """
 
 import os
+import re
 import sqlite3
 from datetime import datetime
 
@@ -140,11 +141,34 @@ DEFAULT_TERMS = (
 )
 
 
+_SQUEEZE = re.compile(r"[^0-9A-Za-z]+")
+
+
+def squeeze(text):
+    """FT~24BK -> FT24BK.  Model codes are written with all sorts of
+    separators - ~ , - , / , spaces, brackets - and nobody wants to
+    reproduce them from memory to find a machine.  Both the search text and
+    the thing being searched go through this, so the separators stop
+    mattering."""
+    return _SQUEEZE.sub("", str(text or "")).upper()
+
+
+def model_code(text):
+    """FT~24BK (DUAL SUCTION POINT) -> FT24BK.  Most models carry a
+    parenthesised note after the code; dropping it gives something a typed
+    model number can match exactly."""
+    return squeeze(str(text or "").split("(")[0])
+
+
 def get_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # Used by the machine and party searches; the tables are small enough
+    # (628 machines, 6,723 parties) that scanning them costs nothing.
+    conn.create_function("squeeze", 1, squeeze, deterministic=True)
+    conn.create_function("model_code", 1, model_code, deterministic=True)
     return conn
 
 

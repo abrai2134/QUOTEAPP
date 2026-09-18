@@ -36,6 +36,13 @@ COL_W = [CONTENT_W * c / sum(_COLS) for c in _COLS]
 
 MIN_ITEM_ROWS = 7
 ROW_H = 5.2 * mm
+HEADER_H = 5.5 * mm
+
+# What everything below the item table needs: the terms/totals/bank block, the
+# contact strip, the four notes and the declaration.  The table is given what
+# is left, and the item text shrinks a little if a quotation has more long
+# descriptions than that will hold.
+FOOTER_H = (5.4 * mm * 6) + 3.5 * mm + 6.5 * mm + (4 * 4.4 * mm + 2 * mm) + 14 * mm
 
 NOTES = [
     "Goods Once sold will not be taken back",
@@ -108,12 +115,46 @@ def _style(size, bold=False, align=TA_LEFT, leading=None, color=black):
     )
 
 
+def _para_h(c, text, style, width):
+    """How tall this text will be once wrapped into `width`."""
+    if not str(text or "").strip():
+        return 0.0
+    return Paragraph(_esc(text), style).wrapOn(c, width, PAGE_H)[1]
+
+
 def _draw_para(c, text, style, x, y_top, width, max_height=None):
     """Draw wrapped text with its top edge at y_top; returns the height used."""
     para = Paragraph(_esc(text), style)
     _, height = para.wrapOn(c, width, max_height or PAGE_H)
     para.drawOn(c, x, y_top - height)
     return height
+
+
+def _table_header(c, y, edges):
+    """The six column titles; returns the y the table body starts at."""
+    c.setLineWidth(0.5)
+    c.setFillColor(black)
+    c.setFont(SERIF_BOLD, 9)
+    c.rect(MARGIN, y - HEADER_H, CONTENT_W, HEADER_H, stroke=1, fill=0)
+    for i, title in enumerate(["No.", "Description", "GST", "Qty", "Rate", "Amount"]):
+        if i:
+            c.line(edges[i], y, edges[i], y - HEADER_H)
+        c.drawCentredString((edges[i] + edges[i + 1]) / 2,
+                            y - HEADER_H + 1.6 * mm, title)
+    return y - HEADER_H
+
+
+def _continued(c, quote, x0):
+    """Top of a run-on page: who it is for, so a loose second sheet still
+    says which quotation it belongs to.  Returns the y to carry on from."""
+    y = PAGE_H - MARGIN
+    c.setFillColor(black)
+    c.setFont(SERIF_BOLD, 10)
+    c.drawString(x0, y - 4 * mm, str(quote.get("party_name") or ""))
+    c.setFont(SERIF, 9)
+    c.drawRightString(x0 + CONTENT_W, y - 4 * mm,
+                      f"{quote.get('heading') or 'QUOTATION'} - continued")
+    return y - 8 * mm
 
 
 def generate_quote_pdf(quote, out_path):
@@ -194,46 +235,86 @@ def generate_quote_pdf(quote, out_path):
     for w in COL_W:
         edges.append(edges[-1] + w)
 
-    header_h = 5.5 * mm
-    c.setLineWidth(0.5)
-    c.setFont(SERIF_BOLD, 9)
-    c.rect(x0, y - header_h, CONTENT_W, header_h, stroke=1, fill=0)
-    for i, title in enumerate(["No.", "Description", "GST", "Qty", "Rate", "Amount"]):
-        if i:
-            c.line(edges[i], y, edges[i], y - header_h)
-        c.drawCentredString((edges[i] + edges[i + 1]) / 2, y - header_h + 1.6 * mm, title)
-    y -= header_h
+    # An item is its description then its model code underneath.  A long
+    # description wraps onto a second line, so each item is given the height it
+    # actually needs rather than a fixed two lines - otherwise the model code
+    # is drawn straight over the wrapped text.  Short items keep the familiar
+    # two-line slot, and the table keeps its seven-row minimum.
+    desc_w = COL_W[1] - 2.4 * mm
+    first_page_room = y - HEADER_H - MARGIN - FOOTER_H
+    size = 8.5
+    while True:
+        desc_style = _style(size, leading=size * 1.18)
+        model_style = _style(size, bold=True, leading=size * 1.18)
+        heights = [
+            max(ROW_H * 2,
+                _para_h(c, item.get("description", ""), desc_style, desc_w)
+                + _para_h(c, item.get("model", ""), model_style, desc_w)
+                + 1.8 * mm)
+            for item in items
+        ]
+        if sum(heights) <= first_page_room or size <= 6.0:
+            break
+        size -= 0.25
 
-    # Every item takes two lines: the description, then its model code.
-    rows = max(len(items), MIN_ITEM_ROWS)
-    table_h = rows * ROW_H * 2
-    table_top = y
-    c.rect(x0, y - table_h, CONTENT_W, table_h, stroke=1, fill=0)
-    for i in range(1, 6):
-        c.line(edges[i], table_top, edges[i], table_top - table_h)
+    # Almost every quotation is one page.  One with more items than will fit
+    # even at the smallest size runs on, rather than losing the last items and
+    # the terms off the bottom.
+    index = 0
+    while True:
+        y = _table_header(c, y, edges)
+        table_top = y
+        room = table_top - MARGIN
+        rest = heights[index:]
+        last = sum(rest) <= room - FOOTER_H
+        if last:
+            take = len(rest)
+            table_h = max(sum(rest), MIN_ITEM_ROWS * ROW_H * 2) if index == 0 \
+                else sum(rest)
+        else:
+            take, used = 0, 0.0
+            for h in rest:
+                if used + h > room and take:
+                    break
+                used, take = used + h, take + 1
+            table_h = used
 
-    desc_style = _style(8.5, leading=10)
-    model_style = _style(8.5, bold=True, leading=10)
-    for index, item in enumerate(items):
-        top = table_top - index * ROW_H * 2
-        qty = float(item.get("qty") or 0)
-        rate = float(item.get("rate") or 0)
-        amount = float(item.get("amount") if item.get("amount") is not None
-                       else qty * rate)
+        c.rect(x0, table_top - table_h, CONTENT_W, table_h, stroke=1, fill=0)
+        for i in range(1, 6):
+            c.line(edges[i], table_top, edges[i], table_top - table_h)
 
-        c.setFont(SERIF, 8.5)
-        c.drawCentredString((edges[0] + edges[1]) / 2, top - 3.7 * mm, str(index + 1))
-        _draw_para(c, item.get("description", ""), desc_style,
-                   edges[1] + 1.2 * mm, top - 0.8 * mm, COL_W[1] - 2.4 * mm)
-        _draw_para(c, item.get("model", ""), model_style,
-                   edges[1] + 1.2 * mm, top - ROW_H - 0.3 * mm, COL_W[1] - 2.4 * mm)
-        c.setFont(SERIF, 8.5)
-        c.drawCentredString((edges[2] + edges[3]) / 2, top - 3.7 * mm,
-                            f"{float(item.get('gst_percent') or 0):.2f}%")
-        c.drawCentredString((edges[3] + edges[4]) / 2, top - 3.7 * mm, plain(qty, 0))
-        c.drawCentredString((edges[4] + edges[5]) / 2, top - 3.7 * mm, plain(rate))
-        c.drawCentredString((edges[5] + edges[6]) / 2, top - 3.7 * mm, rupees(amount))
-    y = table_top - table_h
+        top = table_top
+        for offset in range(take):
+            item = items[index + offset]
+            qty = float(item.get("qty") or 0)
+            rate = float(item.get("rate") or 0)
+            amount = float(item.get("amount") if item.get("amount") is not None
+                           else qty * rate)
+
+            # The figures sit on the first line of the description, whatever
+            # the description does below it.
+            line_y = top - 0.8 * mm - size * 0.95
+            c.setFont(SERIF, size)
+            c.drawCentredString((edges[0] + edges[1]) / 2, line_y,
+                                str(index + offset + 1))
+            used = _draw_para(c, item.get("description", ""), desc_style,
+                              edges[1] + 1.2 * mm, top - 0.8 * mm, desc_w)
+            _draw_para(c, item.get("model", ""), model_style,
+                       edges[1] + 1.2 * mm, top - 0.8 * mm - used, desc_w)
+            c.setFont(SERIF, size)
+            c.drawCentredString((edges[2] + edges[3]) / 2, line_y,
+                                f"{float(item.get('gst_percent') or 0):.2f}%")
+            c.drawCentredString((edges[3] + edges[4]) / 2, line_y, plain(qty, 0))
+            c.drawCentredString((edges[4] + edges[5]) / 2, line_y, plain(rate))
+            c.drawCentredString((edges[5] + edges[6]) / 2, line_y, rupees(amount))
+            top -= heights[index + offset]
+
+        index += take
+        y = table_top - table_h
+        if index >= len(items):
+            break
+        c.showPage()
+        y = _continued(c, quote, x0)
 
     # ---- terms | totals + bank -------------------------------------------
     # Two columns that start and finish on the same lines, split where the
