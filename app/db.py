@@ -69,17 +69,36 @@ CREATE TABLE IF NOT EXISTS salespersons (
 CREATE TABLE IF NOT EXISTS quotes (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     quote_no       TEXT,
+    -- 8-character id in the same shape AppSheet wrote into the Order items sheet
+    sheet_id       TEXT,
     quote_date     TEXT NOT NULL,
+    heading        TEXT DEFAULT 'QUOTATION',
+    std_file       TEXT DEFAULT 'NON STD FILE',
     company_id     INTEGER REFERENCES companies(id),
     client_id      INTEGER REFERENCES clients(id),
     -- party details are snapshotted so editing a client later never rewrites
     -- a quotation that was already sent out
     party_name     TEXT DEFAULT '',
     party_address  TEXT DEFAULT '',
+    city           TEXT DEFAULT '',
+    party_email    TEXT DEFAULT '',
+    whatsapp_no    TEXT DEFAULT '',
+    cc_to_client   TEXT DEFAULT 'NO',
     salesperson    TEXT DEFAULT '',
     salesperson_phone TEXT DEFAULT '',
     order_status   TEXT DEFAULT 'PENDING',
+    payment_status TEXT DEFAULT 'PENDING',
     dispatch       TEXT DEFAULT 'PENDING',
+    followup1      TEXT DEFAULT '',
+    remarks1       TEXT DEFAULT '',
+    followup2      TEXT DEFAULT '',
+    remarks2       TEXT DEFAULT '',
+    followup3      TEXT DEFAULT '',
+    remarks3       TEXT DEFAULT '',
+    reminder_date  TEXT DEFAULT '',
+    dispatch_qty   REAL DEFAULT 0,
+    synced_at      TEXT DEFAULT '',
+    sync_error     TEXT DEFAULT '',
     advance        REAL DEFAULT 0,
     gst_percent    REAL DEFAULT 18,
     terms          TEXT DEFAULT '',
@@ -129,13 +148,42 @@ def get_db():
     return conn
 
 
+# Columns added after the first release.  SQLite cannot add them through
+# CREATE TABLE IF NOT EXISTS, so they are applied to existing databases here.
+ADDED_COLUMNS = {
+    "companies": [("contact_line", "TEXT DEFAULT ''")],
+    "quotes": [
+        ("sheet_id", "TEXT"),
+        ("heading", "TEXT DEFAULT 'QUOTATION'"),
+        ("std_file", "TEXT DEFAULT 'NON STD FILE'"),
+        ("city", "TEXT DEFAULT ''"),
+        ("party_email", "TEXT DEFAULT ''"),
+        ("whatsapp_no", "TEXT DEFAULT ''"),
+        ("cc_to_client", "TEXT DEFAULT 'NO'"),
+        ("payment_status", "TEXT DEFAULT 'PENDING'"),
+        ("followup1", "TEXT DEFAULT ''"),
+        ("remarks1", "TEXT DEFAULT ''"),
+        ("followup2", "TEXT DEFAULT ''"),
+        ("remarks2", "TEXT DEFAULT ''"),
+        ("followup3", "TEXT DEFAULT ''"),
+        ("remarks3", "TEXT DEFAULT ''"),
+        ("reminder_date", "TEXT DEFAULT ''"),
+        ("dispatch_qty", "REAL DEFAULT 0"),
+        ("synced_at", "TEXT DEFAULT ''"),
+        ("sync_error", "TEXT DEFAULT ''"),
+    ],
+}
+
+
 def init_db():
     conn = get_db()
     conn.executescript(SCHEMA)
     # Keep databases created by earlier versions working.
-    existing = {r["name"] for r in conn.execute("PRAGMA table_info(companies)")}
-    if "contact_line" not in existing:
-        conn.execute("ALTER TABLE companies ADD COLUMN contact_line TEXT DEFAULT ''")
+    for table, columns in ADDED_COLUMNS.items():
+        existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        for name, spec in columns:
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {spec}")
     defaults = {"default_terms": DEFAULT_TERMS, "default_company": "WELL WORTH"}
     for key, value in defaults.items():
         if conn.execute("SELECT 1 FROM settings WHERE key = ?", (key,)).fetchone() is None:

@@ -86,6 +86,7 @@ textarea { resize: vertical; line-height: 1.45; }
 }
 .pill.warn { background: #fdf0d5; color: #8a5a00; }
 .pill.ok { background: #e2f5ea; color: var(--accent); }
+.pill.err { background: #fde8e6; color: var(--danger); }
 
 .empty { text-align: center; color: var(--muted); padding: 40px 20px; line-height: 1.6; }
 .hint { font-size: 12.5px; color: var(--muted); line-height: 1.55; margin: 6px 0; }

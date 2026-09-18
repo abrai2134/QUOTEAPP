@@ -13,11 +13,15 @@ limit, and your client list never leaves your computer.
 
 | Screen | What it does |
 |---|---|
-| **Quotes** | Every quotation you have raised, newest first, searchable by party |
-| **New** | The 5-step quotation form (company → party → items → totals → terms) |
-| **Parties** | All **6,723** parties from your client database; tap one to start a quote |
-| **Machines** | All **628** models with live rates from your machine database |
-| **Setup** | Default terms, salespersons and their numbers, bank details, e-mail |
+| **Quotes** | Every quotation and proforma you have raised, newest first, searchable by party, city or id |
+| **New** | The quotation form (document → company → party → items → totals → follow-up → terms) |
+| **Parties** | All **6,723** parties; search, tap to edit, or **+ Add a new party** |
+| **Machines** | All **628** models with live rates; tap to edit a rate, or **+ Add a new machine** |
+| **Setup** | Google Sheet sync, default terms, salespersons, bank details, e-mail |
+
+Every quotation you save is also written into your **Order items** Google Sheet,
+in the same 75 columns AppSheet used — see *Recording quotations in your Google
+Sheet* below.
 
 From a saved quotation you can:
 
@@ -58,29 +62,61 @@ like the AppSheet app did.
 
 ## Raising a quotation
 
-1. **Quoting from** — which of your seven companies is quoting. Defaults to
-   WELL WORTH; change the default under Setup. Pick the salesperson and their
-   number — that prints in the *Prepared by* box.
+1. **Document & company** — QUOTATION, PROFORMA, DELIVERY CHALLAN or TAX
+   INVOICE, the file type (NON STD / FT STD), and which of your seven companies
+   is quoting. Defaults to WELL WORTH; change the default under Setup. Pick the
+   salesperson and their number — that prints in the *Prepared by* box.
 2. **Party** — tap *Choose a party* and search by name, city, phone or GST no.
-   The address box is filled in for you and you can edit it before printing.
-   A party that is not in the database yet can be typed in and saved with
-   *+ Save as a new party*.
+   The address, city, WhatsApp number and e-mail fill in for you, and you can
+   edit any of them before printing. A party that is not in the database yet
+   can be added from the **Parties** tab with *+ Add a new party*, or typed
+   straight into the form and saved with *+ Save as a new party*.
 3. **Items** — tap *Choose a machine*, search the model or description, and the
    rate fills in automatically. Change the qty or override the rate if you are
    giving a discount. Add as many items as you like — the sheet grows to fit,
    and short quotations still print the familiar 7-row table.
 4. **Totals** — GST % and advance received. Sub total, GST, G. Total and balance
    payable update as you type.
-5. **Terms** — pre-filled with your standard terms; edit for this quote only, or
+5. **Follow-up** — the reminder date (a week out by default), the first
+   follow-up date and its remark. These are the columns your reminder list
+   reads from.
+6. **Terms** — pre-filled with your standard terms; edit for this quote only, or
    save them as the new default.
 
-Tap **Save quotation**, then pick XLSX, PDF, or e-mail.
+Tap **Save quotation**. The quote is stored, pushed to your Google Sheet, and
+you land on it — then pick XLSX, PDF, or e-mail.
 
 The file is named exactly as before:
 `PARTY NAME FIRST ITEM DESCRIPTION.xlsx`, e.g.
 `AMIT CHAUHAN & SONS FILING TABLE WITH 0.75HP DC (24inch Table).xlsx`
 
 ---
+
+## Recording quotations in your Google Sheet
+
+Every quotation you save is appended to your **Order items** sheet as one row,
+in the same 75 columns AppSheet wrote — party and address, all seven item slots
+with model, qty, rate and GST, the totals, the follow-up and reminder dates, the
+terms, and an 8-character id in the same shape AppSheet used.
+
+Connecting it takes about five minutes, once, and needs no credentials file: a
+small Apps Script lives in your own Google account and appends the rows. The
+steps are in **[`google-apps-script/README.md`](google-apps-script/README.md)**.
+Then paste the web app URL into **Setup → Google Sheet** and press **Test the
+connection**.
+
+**Nothing is ever lost if the sheet is unreachable.** Every row is written to
+`instance/order_items.csv` first. A quotation that did not reach the sheet shows
+a **NOT IN SHEET** tag in the list, the quotation itself has a **Send to the
+Order items sheet** button, and Setup has **Sync all pending** for everything
+still waiting.
+
+Two things worth knowing:
+
+- The sheet has seven item slots, so only the first seven items of a quotation
+  reach it. The quotation .xlsx itself carries as many items as you like.
+- Columns are matched on your sheet's own header row, ignoring case, spaces and
+  punctuation — so columns you add by hand, or reorder, do not break the sync.
 
 ## Setting up e-mail (optional)
 
@@ -162,13 +198,17 @@ file is your whole quotation history.
 
 ```
 app/
-  main.py        Flask routes (the API the screens talk to)
-  db.py          database schema
-  seed.py        CSV import
-  quote_xlsx.py  the workbook generator - a faithful rebuild of your template
-  print_view.py  the A4 HTML view used for Print → Save as PDF
-  mailer.py      SMTP sending
-  static/        the app itself (index.html, app.js, style.css)
+  main.py         Flask routes (the API the screens talk to)
+  db.py           database schema
+  seed.py         CSV import
+  quote_xlsx.py   the workbook generator - a faithful rebuild of your template
+  order_sheet.py  builds the 75-column Order items row and sends it to the sheet
+  print_view.py   the A4 HTML view used for Print → Save as PDF
+  mailer.py       SMTP sending
+  static/         the app itself (index.html, app.js, style.css)
+google-apps-script/
+  Code.gs         paste this into your Google Sheet to receive the rows
+  README.md       the five-minute setup
 data/
   SAMPLE_QUOTE_REFERENCE.xlsx   your original AppSheet output, kept as the
                                 reference the generator is checked against

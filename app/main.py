@@ -7,6 +7,9 @@ from flask import Flask, jsonify, request, send_file, send_from_directory
 
 from .db import DEFAULT_TERMS, INSTANCE_DIR, get_db, get_setting, init_db, now, set_setting
 from .mailer import MailNotConfigured, is_configured as mail_configured, send_quote
+from .order_sheet import (COLUMNS as SHEET_COLUMNS, HEADINGS, MIRROR_PATH, STD_FILES,
+                          build_row, is_configured as sheet_configured, new_sheet_id,
+                          push_to_sheet, sheet_url, sync_quote)
 from .print_view import render as render_print_view
 from .quote_xlsx import build_filename, generate_quote_xlsx, xlsx_to_pdf
 
@@ -177,6 +180,15 @@ def update_client(client_id):
     return jsonify(dict(row) if row else {})
 
 
+@app.delete("/api/clients/<int:client_id>")
+def delete_client(client_id):
+    conn = get_db()
+    conn.execute("DELETE FROM clients WHERE id = ?", (client_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({"deleted": client_id})
+
+
 @app.get("/api/machines")
 def search_machines():
     query = (request.args.get("q") or "").strip()
@@ -233,25 +245,47 @@ def update_machine(machine_id):
     return jsonify(dict(row) if row else {})
 
 
+@app.delete("/api/machines/<int:machine_id>")
+def delete_machine(machine_id):
+    """Hide a model from the item picker; quotations that used it are untouched."""
+    conn = get_db()
+    conn.execute("UPDATE machines SET is_active = 0 WHERE id = ?", (machine_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({"hidden": machine_id})
+
+
 # --------------------------------------------------------------------------
 # settings
 # --------------------------------------------------------------------------
 
 @app.get("/api/settings")
 def read_settings():
+    conn = get_db()
+    pending = conn.execute(
+        "SELECT COUNT(*) AS n FROM quotes WHERE COALESCE(synced_at, '') = ''"
+    ).fetchone()["n"]
+    conn.close()
     return jsonify({
         "default_terms": get_setting("default_terms", DEFAULT_TERMS),
         "default_company": get_setting("default_company", ""),
         "mail_configured": mail_configured(),
+        "sheet_url": sheet_url(),
+        "sheet_secret": get_setting("sheet_secret", ""),
+        "sheet_configured": sheet_configured(),
+        "pending_sync": pending,
+        "headings": HEADINGS,
+        "std_files": STD_FILES,
     })
 
 
 @app.put("/api/settings")
 def write_settings():
     data = request.get_json(force=True)
-    for key in ("default_terms", "default_company"):
+    for key in ("default_terms", "default_company", "sheet_webapp_url", "sheet_secret"):
         if key in data:
-            set_setting(key, data[key])
+            set_setting(key, (data[key] or "").strip() if isinstance(data[key], str)
+                        else data[key])
     return jsonify({
         "default_terms": get_setting("default_terms", DEFAULT_TERMS),
         "default_company": get_setting("default_company", ""),
@@ -317,9 +351,10 @@ def list_quotes():
         rows = conn.execute(
             """SELECT q.*, c.name AS company_name FROM quotes q
                LEFT JOIN companies c ON c.id = q.company_id
-               WHERE q.party_name LIKE ? OR q.quote_no LIKE ?
+               WHERE q.party_name LIKE ? OR q.quote_no LIKE ? OR q.city LIKE ?
+                  OR q.sheet_id LIKE ?
                ORDER BY q.id DESC LIMIT ?""",
-            (like, like, limit)).fetchall()
+            (like, like, like, like, limit)).fetchall()
     else:
         rows = conn.execute(
             """SELECT q.*, c.name AS company_name FROM quotes q
@@ -347,11 +382,20 @@ def persist_quote(data, quote_id=None):
 
     quote_date = data.get("quote_date") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     fields = (
-        data.get("quote_no", ""), quote_date, data.get("company_id"),
+        data.get("quote_no", ""), quote_date,
+        data.get("heading") or "QUOTATION", data.get("std_file") or "NON STD FILE",
+        data.get("company_id"),
         data.get("client_id"), data.get("party_name", ""),
-        data.get("party_address", ""), data.get("salesperson", ""),
-        data.get("salesperson_phone", ""),
-        data.get("order_status", "PENDING"), data.get("dispatch", "PENDING"),
+        data.get("party_address", ""), data.get("city", ""),
+        data.get("party_email", ""), data.get("whatsapp_no", ""),
+        data.get("cc_to_client") or "NO",
+        data.get("salesperson", ""), data.get("salesperson_phone", ""),
+        data.get("order_status", "PENDING"),
+        data.get("payment_status") or "PENDING", data.get("dispatch", "PENDING"),
+        data.get("followup1", ""), data.get("remarks1", ""),
+        data.get("followup2", ""), data.get("remarks2", ""),
+        data.get("followup3", ""), data.get("remarks3", ""),
+        data.get("reminder_date", ""), as_float(data.get("dispatch_qty")),
         advance, gst_percent, data.get("terms", ""),
         subtotal, gst_amount, grand_total, balance,
     )
@@ -359,21 +403,30 @@ def persist_quote(data, quote_id=None):
     conn = get_db()
     if quote_id:
         conn.execute(
-            """UPDATE quotes SET quote_no = ?, quote_date = ?, company_id = ?,
-                   client_id = ?, party_name = ?, party_address = ?, salesperson = ?,
-                   salesperson_phone = ?, order_status = ?, dispatch = ?, advance = ?,
-                   gst_percent = ?, terms = ?, subtotal = ?, gst_amount = ?,
-                   grand_total = ?, balance = ?, updated_at = ?
+            """UPDATE quotes SET quote_no = ?, quote_date = ?, heading = ?,
+                   std_file = ?, company_id = ?, client_id = ?, party_name = ?,
+                   party_address = ?, city = ?, party_email = ?, whatsapp_no = ?,
+                   cc_to_client = ?, salesperson = ?, salesperson_phone = ?,
+                   order_status = ?, payment_status = ?, dispatch = ?,
+                   followup1 = ?, remarks1 = ?, followup2 = ?, remarks2 = ?,
+                   followup3 = ?, remarks3 = ?, reminder_date = ?, dispatch_qty = ?,
+                   advance = ?, gst_percent = ?, terms = ?, subtotal = ?,
+                   gst_amount = ?, grand_total = ?, balance = ?, updated_at = ?
                WHERE id = ?""", fields + (now(), quote_id))
         conn.execute("DELETE FROM quote_items WHERE quote_id = ?", (quote_id,))
     else:
         cur = conn.execute(
-            """INSERT INTO quotes (quote_no, quote_date, company_id, client_id,
-                   party_name, party_address, salesperson, salesperson_phone,
-                   order_status, dispatch, advance, gst_percent, terms, subtotal,
-                   gst_amount, grand_total, balance, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            fields + (now(), now()))
+            """INSERT INTO quotes (quote_no, quote_date, heading, std_file,
+                   company_id, client_id, party_name, party_address, city,
+                   party_email, whatsapp_no, cc_to_client, salesperson,
+                   salesperson_phone, order_status, payment_status, dispatch,
+                   followup1, remarks1, followup2, remarks2, followup3, remarks3,
+                   reminder_date, dispatch_qty, advance, gst_percent, terms,
+                   subtotal, gst_amount, grand_total, balance,
+                   sheet_id, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            fields + (new_sheet_id(), now(), now()))
         quote_id = cur.lastrowid
 
     for item in items:
@@ -390,6 +443,22 @@ def persist_quote(data, quote_id=None):
     return quote
 
 
+def save_and_sync(data, quote_id=None):
+    """Persist the quotation, then record it in the Order items sheet.
+
+    A sheet that is unreachable never blocks the save: the row is always kept
+    in the local mirror and the quote is listed as not synced.
+    """
+    quote = persist_quote(data, quote_id)
+    synced, message = sync_quote(quote)
+    conn = get_db()
+    record_sync(conn, quote["id"], synced, message)
+    conn.close()
+    quote["synced"] = synced
+    quote["sync_message"] = message
+    return quote
+
+
 @app.post("/api/quotes")
 def create_quote():
     data = request.get_json(force=True)
@@ -397,7 +466,7 @@ def create_quote():
         return jsonify({"error": "Select a party first"}), 400
     if not data.get("company_id"):
         return jsonify({"error": "Select which of your companies is quoting"}), 400
-    return jsonify(persist_quote(data)), 201
+    return jsonify(save_and_sync(data)), 201
 
 
 @app.put("/api/quotes/<int:quote_id>")
@@ -408,7 +477,7 @@ def edit_quote(quote_id):
     conn.close()
     if not exists:
         return jsonify({"error": "Not found"}), 404
-    return jsonify(persist_quote(data, quote_id))
+    return jsonify(save_and_sync(data, quote_id))
 
 
 @app.delete("/api/quotes/<int:quote_id>")
@@ -485,6 +554,77 @@ def print_view(quote_id):
     if not quote:
         return jsonify({"error": "Not found"}), 404
     return render_print_view(quote)
+
+
+def record_sync(conn, quote_id, synced, message):
+    conn.execute(
+        "UPDATE quotes SET synced_at = ?, sync_error = ? WHERE id = ?",
+        (now() if synced else "", "" if synced else message, quote_id))
+    conn.commit()
+
+
+@app.post("/api/quotes/<int:quote_id>/sync")
+def sync_one(quote_id):
+    """Append this quotation to the Order items sheet (and the local mirror)."""
+    conn = get_db()
+    quote = load_quote(conn, quote_id)
+    if not quote:
+        conn.close()
+        return jsonify({"error": "Not found"}), 404
+    synced, message = sync_quote(quote)
+    record_sync(conn, quote_id, synced, message)
+    conn.close()
+    return jsonify({"synced": synced, "message": message}), (200 if synced else 502)
+
+
+@app.post("/api/sync-pending")
+def sync_pending():
+    """Push every quotation that has not reached the sheet yet."""
+    conn = get_db()
+    ids = [r["id"] for r in conn.execute(
+        "SELECT id FROM quotes WHERE COALESCE(synced_at, '') = '' ORDER BY id")]
+    done, failed, last_error = 0, 0, ""
+    for quote_id in ids:
+        quote = load_quote(conn, quote_id)
+        synced, message = sync_quote(quote)
+        record_sync(conn, quote_id, synced, message)
+        if synced:
+            done += 1
+        else:
+            failed += 1
+            last_error = message
+    conn.close()
+    return jsonify({"synced": done, "failed": failed, "error": last_error})
+
+
+@app.post("/api/sheet/test")
+def sheet_test():
+    """Check the Apps Script URL by sending a row the script ignores."""
+    data = request.get_json(force=True) or {}
+    if "sheet_webapp_url" in data:
+        set_setting("sheet_webapp_url", (data.get("sheet_webapp_url") or "").strip())
+        set_setting("sheet_secret", (data.get("sheet_secret") or "").strip())
+    if not sheet_configured():
+        return jsonify({"ok": False, "error": "Paste the web app URL first."}), 400
+    probe = {c: "" for c in SHEET_COLUMNS}
+    probe["ID"] = "CONNECTION TEST"
+    probe["HEADING "] = "CONNECTION TEST"
+    probe["PARTY"] = "Connection test from the quotation app - this row can be deleted"
+    try:
+        result = push_to_sheet(probe)
+    except RuntimeError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 502
+    return jsonify({"ok": True, "row": result.get("row"),
+                    "message": "Sheet is connected. A test row was added at row "
+                               f"{result.get('row')} - delete it when you like."})
+
+
+@app.get("/api/order-items.csv")
+def download_mirror():
+    """The local copy of every row that was built for the sheet."""
+    if not os.path.exists(MIRROR_PATH):
+        return jsonify({"error": "No rows yet."}), 404
+    return send_file(MIRROR_PATH, as_attachment=True, download_name="Order items.csv")
 
 
 @app.post("/api/quotes/<int:quote_id>/email")

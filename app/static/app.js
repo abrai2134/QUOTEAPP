@@ -10,6 +10,11 @@ const state = {
   defaultTerms: '',
   defaultCompany: '',
   mailConfigured: false,
+  headings: ['QUOTATION'],
+  stdFiles: ['NON STD FILE'],
+  sheet: { url: '', secret: '', configured: false, pending: 0 },
+  editingClient: null,
+  editingMachine: null,
   quote: null,       // the quote being edited (null = new)
   items: [],         // working item rows
   clientId: null,
@@ -49,7 +54,8 @@ function debounce(fn, ms = 250) {
 
 const TITLES = {
   quotes: 'Quotations', form: 'Quotation', detail: 'Quotation',
-  clients: 'Parties', machines: 'Machines & Rates', settings: 'Setup',
+  clients: 'Parties', 'party-edit': 'Party', machines: 'Machines & Rates',
+  'machine-edit': 'Machine', settings: 'Setup',
 };
 
 function show(screen) {
@@ -57,7 +63,9 @@ function show(screen) {
   $$('.screen').forEach((s) => { s.hidden = s.dataset.screen !== screen; });
   $('#screenTitle').textContent = TITLES[screen] || 'Quotation';
   const tabFor = { quotes: 'quotes', form: 'new', detail: 'quotes',
-                   clients: 'clients', machines: 'machines', settings: 'settings' };
+                   clients: 'clients', 'party-edit': 'clients',
+                   machines: 'machines', 'machine-edit': 'machines',
+                   settings: 'settings' };
   $$('.tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.go === tabFor[screen]));
   const action = $('#topAction');
   if (screen === 'quotes') {
@@ -138,12 +146,15 @@ async function loadQuotes(query = '') {
     card.className = 'card';
     const status = (q.order_status || '').toUpperCase();
     const cls = status === 'PENDING' ? 'warn' : 'ok';
+    const unsynced = !q.synced_at;
     card.innerHTML = `
       <span class="amt">${money(q.grand_total)}</span>
       <div class="t">${escapeHtml(q.party_name || '(no party)')}</div>
       <div class="s">
+        <span class="pill">${escapeHtml(q.heading || 'QUOTATION')}</span>
         <span class="pill ${cls}">${escapeHtml(status || 'PENDING')}</span>
-        ${escapeHtml(q.company_name || '')}<br>
+        ${unsynced ? '<span class="pill err">NOT IN SHEET</span>' : ''}
+        <br>${escapeHtml(q.company_name || '')}${q.city ? ' · ' + escapeHtml(q.city) : ''}<br>
         ${escapeHtml((q.quote_date || '').slice(0, 16))} · by ${escapeHtml(q.salesperson || '-')}
       </div>`;
     card.onclick = () => openQuote(q.id);
@@ -174,7 +185,9 @@ async function openQuote(id) {
       <h3>${escapeHtml(q.party_name)}</h3>
       <div class="meta">${escapeHtml(q.company.name || '')}
 ${escapeHtml((q.quote_date || '').slice(0, 16))} · Prepared by ${escapeHtml(q.salesperson || '-')}
-Order: ${escapeHtml(q.order_status || '')} · Dispatch: ${escapeHtml(q.dispatch || '')}</div>
+Order: ${escapeHtml(q.order_status || '')} · Payment: ${escapeHtml(q.payment_status || '')} · Dispatch: ${escapeHtml(q.dispatch || '')}
+${q.synced_at ? 'In the Order items sheet · ' + escapeHtml(q.synced_at)
+              : 'Not in the sheet yet' + (q.sync_error ? ' · ' + escapeHtml(q.sync_error) : '')}</div>
     </div>
     <div class="block">
       <h2>Items</h2>
@@ -193,6 +206,21 @@ Order: ${escapeHtml(q.order_status || '')} · Dispatch: ${escapeHtml(q.dispatch 
     </div>`;
   show('detail');
 }
+
+$('#btnSyncQuote').onclick = async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  try {
+    const res = await api(`/api/quotes/${currentQuoteId}/sync`, { method: 'POST' });
+    toast(res.message);
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+    await refreshSettings();
+    await openQuote(currentQuoteId);
+  }
+};
 
 $('#btnXlsx').onclick = () => { window.location = `/api/quotes/${currentQuoteId}/download?fmt=xlsx`; };
 $('#btnPrint').onclick = () => {
@@ -245,8 +273,19 @@ function newQuote() {
   state.quote = null;
   state.clientId = null;
   state.items = [];
+  $('#fHeading').value = state.headings[0] || 'QUOTATION';
+  $('#fStdFile').value = state.stdFiles[0] || 'NON STD FILE';
   $('#fParty').value = '';
   $('#fPartyAddress').value = '';
+  $('#fCity').value = '';
+  $('#fWhatsapp').value = '';
+  $('#fPartyEmail').value = '';
+  $('#fCcClient').value = 'NO';
+  $('#fPaymentStatus').value = 'PENDING';
+  $('#fDispatchQty').value = 0;
+  $('#fReminder').value = defaultReminder();
+  $('#fFollow1').value = todayISO();
+  $('#fRemarks1').value = '';
   $('#fAdvance').value = 0;
   $('#fGst').value = 18;
   $('#fOrderStatus').value = 'PENDING';
@@ -268,6 +307,17 @@ function fillForm(q) {
   $('#fSalesPhone').value = q.salesperson_phone || '';
   $('#fParty').value = q.party_name || '';
   $('#fPartyAddress').value = q.party_address || '';
+  $('#fHeading').value = q.heading || 'QUOTATION';
+  $('#fStdFile').value = q.std_file || 'NON STD FILE';
+  $('#fCity').value = q.city || '';
+  $('#fWhatsapp').value = q.whatsapp_no || '';
+  $('#fPartyEmail').value = q.party_email || '';
+  $('#fCcClient').value = q.cc_to_client || 'NO';
+  $('#fPaymentStatus').value = q.payment_status || 'PENDING';
+  $('#fDispatchQty').value = q.dispatch_qty || 0;
+  $('#fReminder').value = (q.reminder_date || '').slice(0, 10);
+  $('#fFollow1').value = (q.followup1 || '').slice(0, 10);
+  $('#fRemarks1').value = q.remarks1 || '';
   $('#fGst').value = q.gst_percent;
   $('#fAdvance').value = q.advance;
   $('#fOrderStatus').value = q.order_status || 'PENDING';
@@ -304,13 +354,18 @@ $('#btnPickParty').onclick = () => openSheet({
   render: (c) => `<div class="t">${escapeHtml(c.party)}</div>
     <div class="s">${escapeHtml(c.city || '')} ${c.cell_no ? '· ' + escapeHtml(c.cell_no) : ''}
     ${c.gst_no ? '<br>GST ' + escapeHtml(c.gst_no) : ''}</div>`,
-  onPick: (c) => {
-    state.clientId = c.id;
-    $('#fParty').value = c.party;
-    $('#fPartyAddress').value = buildPartyAddress(c);
-    $('#btnPickParty .picker-label').textContent = c.party;
-  },
+  onPick: (c) => applyClientToForm(c),
 });
+
+function applyClientToForm(c) {
+  state.clientId = c.id;
+  $('#fParty').value = c.party;
+  $('#fPartyAddress').value = buildPartyAddress(c);
+  $('#fCity').value = c.city || '';
+  $('#fWhatsapp').value = c.cell_no || '';
+  $('#fPartyEmail').value = c.email || '';
+  $('#btnPickParty .picker-label').textContent = c.party;
+}
 
 function buildPartyAddress(c) {
   // Mirrors how the AppSheet template filled the ADD box: address lines, then
@@ -466,12 +521,23 @@ $('#btnSaveQuote').onclick = async () => {
   const payload = {
     company_id: Number($('#fCompany').value) || null,
     client_id: state.clientId,
+    heading: $('#fHeading').value,
+    std_file: $('#fStdFile').value,
     party_name: $('#fParty').value.trim(),
     party_address: $('#fPartyAddress').value,
+    city: $('#fCity').value.trim(),
+    whatsapp_no: $('#fWhatsapp').value.trim(),
+    party_email: $('#fPartyEmail').value.trim(),
+    cc_to_client: $('#fCcClient').value,
     salesperson: $('#fSalesperson').value,
     salesperson_phone: $('#fSalesPhone').value,
     order_status: $('#fOrderStatus').value,
+    payment_status: $('#fPaymentStatus').value,
     dispatch: $('#fDispatch').value,
+    dispatch_qty: Number($('#fDispatchQty').value) || 0,
+    reminder_date: $('#fReminder').value,
+    followup1: $('#fFollow1').value,
+    remarks1: $('#fRemarks1').value,
     advance: Number($('#fAdvance').value) || 0,
     gst_percent: Number($('#fGst').value) || 0,
     terms: $('#fTerms').value,
@@ -485,7 +551,9 @@ $('#btnSaveQuote').onclick = async () => {
     const saved = state.quote
       ? await api(`/api/quotes/${state.quote.id}`, { method: 'PUT', body: JSON.stringify(payload) })
       : await api('/api/quotes', { method: 'POST', body: JSON.stringify(payload) });
-    toast('Quotation saved');
+    toast(saved.synced ? 'Saved and added to the Order items sheet'
+                       : 'Saved · ' + (saved.sync_message || 'not synced yet'),
+          !saved.synced && state.sheet.configured);
     await loadQuotes();
     await openQuote(saved.id);
   } catch (err) {
@@ -514,18 +582,129 @@ async function loadClients(query = '') {
       <div class="s">${escapeHtml(c.city || '')}${c.cell_no ? ' · ' + escapeHtml(c.cell_no) : ''}
       ${c.email ? '<br>' + escapeHtml(c.email) : ''}
       ${c.gst_no ? '<br>GST ' + escapeHtml(c.gst_no) : ''}</div>`;
-    card.onclick = () => {
-      newQuote();
-      state.clientId = c.id;
-      $('#fParty').value = c.party;
-      $('#fPartyAddress').value = buildPartyAddress(c);
-      $('#btnPickParty .picker-label').textContent = c.party;
-      toast(`New quotation for ${c.party}`);
-    };
+    card.onclick = () => openPartyEditor(c);
     list.appendChild(card);
   });
 }
 $('#clientSearch').addEventListener('input', debounce((e) => loadClients(e.target.value)));
+
+
+
+/* -------------------------------------------------------- party editor */
+
+const PARTY_FIELDS = {
+  pParty: 'party', pAddress: 'address', pCity: 'city', pGst: 'gst_no',
+  pCell: 'cell_no', pCell2: 'cell_no2', pEmail: 'email', pEmail2: 'email2',
+  pRemarks: 'remarks',
+};
+
+function openPartyEditor(client) {
+  state.editingClient = client || null;
+  $('#partyEditTitle').textContent = client ? client.party : 'New party';
+  Object.entries(PARTY_FIELDS).forEach(([id, key]) => {
+    $('#' + id).value = client ? (client[key] || '') : '';
+  });
+  $('#btnDeleteParty').hidden = !client;
+  show('party-edit');
+}
+
+function partyPayload() {
+  const data = {};
+  Object.entries(PARTY_FIELDS).forEach(([id, key]) => {
+    data[key] = $('#' + id).value.trim();
+  });
+  data.entry_by = $('#fSalesperson').value || '';
+  return data;
+}
+
+async function saveParty() {
+  const data = partyPayload();
+  if (!data.party) { toast('Party name is required', true); return null; }
+  const saved = state.editingClient
+    ? await api(`/api/clients/${state.editingClient.id}`,
+                { method: 'PUT', body: JSON.stringify(data) })
+    : await api('/api/clients', { method: 'POST', body: JSON.stringify(data) });
+  state.editingClient = saved;
+  return saved;
+}
+
+$('#btnAddParty').onclick = () => openPartyEditor(null);
+
+$('#btnSaveParty').onclick = async () => {
+  try {
+    const saved = await saveParty();
+    if (!saved) return;
+    toast(`${saved.party} saved`);
+    await loadClients($('#clientSearch').value);
+    show('clients');
+  } catch (err) { toast(err.message, true); }
+};
+
+$('#btnPartyQuote').onclick = async () => {
+  try {
+    const saved = await saveParty();
+    if (!saved) return;
+    newQuote();
+    applyClientToForm(saved);
+    toast(`New quotation for ${saved.party}`);
+  } catch (err) { toast(err.message, true); }
+};
+
+$('#btnCancelParty').onclick = () => show('clients');
+
+$('#btnDeleteParty').onclick = async () => {
+  if (!state.editingClient) return;
+  if (!confirm(`Remove ${state.editingClient.party} from the party list?`)) return;
+  await api(`/api/clients/${state.editingClient.id}`, { method: 'DELETE' });
+  toast('Party removed');
+  await loadClients($('#clientSearch').value);
+  show('clients');
+};
+
+/* ------------------------------------------------------ machine editor */
+
+function openMachineEditor(machine) {
+  state.editingMachine = machine || null;
+  $('#machineEditTitle').textContent = machine ? machine.model : 'New machine';
+  $('#mModel').value = machine ? machine.model : '';
+  $('#mDesc').value = machine ? machine.description : '';
+  $('#mRate').value = machine ? machine.rate : 0;
+  $('#btnHideMachine').hidden = !machine;
+  show('machine-edit');
+}
+
+$('#btnAddMachine').onclick = () => openMachineEditor(null);
+$('#btnCancelMachine').onclick = () => show('machines');
+
+$('#btnSaveMachine').onclick = async () => {
+  const data = {
+    model: $('#mModel').value.trim(),
+    description: $('#mDesc').value.trim(),
+    rate: Number($('#mRate').value) || 0,
+    entry_by: $('#fSalesperson').value || '',
+  };
+  if (!data.model) return toast('Model code is required', true);
+  try {
+    if (state.editingMachine) {
+      await api(`/api/machines/${state.editingMachine.id}`,
+                { method: 'PUT', body: JSON.stringify(data) });
+    } else {
+      await api('/api/machines', { method: 'POST', body: JSON.stringify(data) });
+    }
+    toast(`${data.model} saved`);
+    await loadMachines($('#machineSearch').value);
+    show('machines');
+  } catch (err) { toast(err.message, true); }
+};
+
+$('#btnHideMachine').onclick = async () => {
+  if (!state.editingMachine) return;
+  if (!confirm(`Hide ${state.editingMachine.model} from the item picker?`)) return;
+  await api(`/api/machines/${state.editingMachine.id}`, { method: 'DELETE' });
+  toast('Hidden from the picker');
+  await loadMachines($('#machineSearch').value);
+  show('machines');
+};
 
 /* ------------------------------------------------------------ machines */
 
@@ -534,11 +713,12 @@ async function loadMachines(query = '') {
   const list = $('#machineList');
   list.innerHTML = '';
   rows.forEach((m) => {
-    const card = document.createElement('div');
+    const card = document.createElement('button');
     card.className = 'card';
     card.innerHTML = `<span class="amt">${money(m.rate)}</span>
       <div class="t">${escapeHtml(m.description || m.model)}</div>
       <div class="s">${escapeHtml(m.model)}${m.entry_by ? ' · ' + escapeHtml(m.entry_by) : ''}</div>`;
+    card.onclick = () => openMachineEditor(m);
     list.appendChild(card);
   });
 }
@@ -546,7 +726,37 @@ $('#machineSearch').addEventListener('input', debounce((e) => loadMachines(e.tar
 
 /* ------------------------------------------------------------ settings */
 
+function paintSheetStatus() {
+  const el = $('#sheetStatus');
+  if (state.sheet.configured) {
+    el.textContent = state.sheet.pending
+      ? `Connected · ${state.sheet.pending} quotation(s) still waiting to be sent.`
+      : 'Connected · every saved quotation goes straight into the sheet.';
+  } else {
+    el.textContent = 'Not connected yet. Quotations are still recorded in '
+      + 'instance/order_items.csv until you connect the sheet.';
+  }
+}
+
+async function refreshSettings() {
+  const s = await api('/api/settings');
+  state.defaultTerms = s.default_terms || '';
+  state.defaultCompany = s.default_company || '';
+  state.mailConfigured = s.mail_configured;
+  state.headings = s.headings || state.headings;
+  state.stdFiles = s.std_files || state.stdFiles;
+  state.sheet = {
+    url: s.sheet_url || '', secret: s.sheet_secret || '',
+    configured: s.sheet_configured, pending: s.pending_sync || 0,
+  };
+  return s;
+}
+
 async function loadSettings() {
+  await refreshSettings();
+  $('#sSheetUrl').value = state.sheet.url;
+  $('#sSheetSecret').value = state.sheet.secret;
+  paintSheetStatus();
   $('#sTerms').value = state.defaultTerms;
   $('#mailStatus').textContent = state.mailConfigured
     ? '✅ E-mail is configured — the ✉ button on a quotation will send it.'
@@ -627,6 +837,54 @@ $('#btnSettingsSave').onclick = async () => {
   toast('Default terms saved');
 };
 
+
+$('#btnSheetTest').onclick = async (e) => {
+  const btn = e.currentTarget;
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Testing…';
+  try {
+    const res = await api('/api/sheet/test', {
+      method: 'POST',
+      body: JSON.stringify({
+        sheet_webapp_url: $('#sSheetUrl').value.trim(),
+        sheet_secret: $('#sSheetSecret').value.trim(),
+      }),
+    });
+    toast(res.message);
+    await refreshSettings();
+    paintSheetStatus();
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+};
+
+$('#btnSyncPending').onclick = async (e) => {
+  const btn = e.currentTarget;
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  try {
+    const res = await api('/api/sync-pending', { method: 'POST' });
+    toast(res.failed
+      ? `${res.synced} sent, ${res.failed} failed · ${res.error}`
+      : `${res.synced} quotation(s) added to the sheet`, Boolean(res.failed));
+    await refreshSettings();
+    paintSheetStatus();
+    await loadQuotes();
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+};
+
+$('#btnMirror').onclick = () => { window.location = '/api/order-items.csv'; };
+
 $('#btnAddSales').onclick = async () => {
   const name = $('#newSalesName').value.trim();
   if (!name) return toast('Enter a name', true);
@@ -642,6 +900,25 @@ $('#btnAddSales').onclick = async () => {
 };
 
 /* ----------------------------------------------------------- utilities */
+
+function todayISO() {
+  const d = new Date();
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
+// The AppSheet rows carried a reminder about a week out; keep that habit.
+function defaultReminder(days = 6) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
+function fillPickLists() {
+  $('#fHeading').innerHTML = state.headings
+    .map((h) => `<option value="${escapeAttr(h)}">${escapeHtml(h)}</option>`).join('');
+  $('#fStdFile').innerHTML = state.stdFiles
+    .map((f) => `<option value="${escapeAttr(f)}">${escapeHtml(f)}</option>`).join('');
+}
 
 function escapeHtml(text) {
   return String(text ?? '').replace(/[&<>"']/g, (ch) => ({
@@ -672,10 +949,8 @@ async function bootstrapLists() {
 
 (async function boot() {
   try {
-    const settings = await api('/api/settings');
-    state.defaultTerms = settings.default_terms || '';
-    state.defaultCompany = settings.default_company || '';
-    state.mailConfigured = settings.mail_configured;
+    await refreshSettings();
+    fillPickLists();
     await bootstrapLists();
     await loadQuotes();
     show('quotes');
