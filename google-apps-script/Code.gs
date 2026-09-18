@@ -41,6 +41,16 @@ function doPost(e) {
 
     var sheet = pickSheet(SpreadsheetApp.getActiveSpreadsheet());
 
+    // "Test the connection" sends a row with test:true. Everything above has
+    // run - the URL, the deployment, the secret and the tab are all good - so
+    // answer and write nothing.
+    if (payload.test) {
+      return reply({ ok: true, via: 'doPost', test: true,
+                     tab: sheet.getName(),
+                     timezone: SpreadsheetApp.getActiveSpreadsheet()
+                                             .getSpreadsheetTimeZone() });
+    }
+
     // Match on the sheet's own header row, so the app never depends on column
     // order and extra columns you add by hand are left untouched.
     var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn())
@@ -84,6 +94,10 @@ function doGet(e) {
         // every quotation lands in the sheet at the wrong time of day, so the
         // app checks it and says so.
         timezone: book.getSpreadsheetTimeZone(),
+        // Tells the app this copy understands a test row and will not write
+        // it.  Without this it never sends one, so an older copy of the
+        // script can never be tricked into appending a blank row.
+        canTest: true,
       });
     }
     if (SHARED_SECRET && params.secret !== SHARED_SECRET) {

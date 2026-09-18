@@ -173,15 +173,45 @@ def append_mirror(row):
     return MIRROR_PATH
 
 
+def clean_url(value):
+    """Tidy a pasted web app URL.
+
+    People paste these off a phone, so they arrive with stray spaces, a
+    trailing slash, or the "?usp=sharing" Google adds when the link is copied
+    from a share dialog.  Apps Script answers a GET on any of those and 404s
+    the POST, which is a miserable thing to debug.
+    """
+    text = str(value or "").strip().strip('"\'')
+    text = text.split("?", 1)[0].split("#", 1)[0]
+    return text.rstrip("/")
+
+
+def url_complaint(url):
+    """What is obviously wrong with this URL, or "" when it looks right."""
+    if not url:
+        return ""
+    if not url.startswith("https://script.google.com/"):
+        return ("That does not look like an Apps Script web app URL - it should "
+                "start with https://script.google.com/macros/s/")
+    if url.endswith("/dev"):
+        return ("That is the test URL, which only works while you are signed in "
+                "to the script. Use Deploy > New deployment and copy the /exec "
+                "URL instead.")
+    if not url.endswith("/exec"):
+        return ("An Apps Script web app URL ends in /exec. Copy it again from "
+                "Deploy > Manage deployments.")
+    return ""
+
+
 def sheet_url():
-    return (get_setting("sheet_webapp_url", "") or "").strip()
+    return clean_url(get_setting("sheet_webapp_url", ""))
 
 
 def is_configured():
     return bool(sheet_url())
 
 
-def push_to_sheet(row, timeout=None):
+def push_to_sheet(row, timeout=None, dry_run=False):
     """POST one row to the Apps Script web app.
 
     Returns the parsed response.  Raises RuntimeError with a message meant for
@@ -196,6 +226,7 @@ def push_to_sheet(row, timeout=None):
         "secret": get_setting("sheet_secret", "") or "",
         "columns": COLUMNS,
         "row": row,
+        "test": bool(dry_run),
     }).encode("utf-8")
 
     request = urllib.request.Request(
@@ -205,6 +236,13 @@ def push_to_sheet(row, timeout=None):
         with urllib.request.urlopen(request, timeout=timeout or SYNC_TIMEOUT) as response:
             body = response.read().decode("utf-8", "replace").strip()
     except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise RuntimeError(
+                "Google does not recognise that web app URL (HTTP 404). The "
+                "deployment has usually been replaced: in the script open "
+                "Deploy > Manage deployments, press the pencil, set Version to "
+                "'New version', deploy, then copy the URL again into Setup."
+            ) from exc
         raise RuntimeError(f"The sheet refused the row (HTTP {exc.code}). "
                            "Check that the web app is deployed with access set "
                            "to 'Anyone'.") from exc
@@ -231,6 +269,8 @@ def push_to_sheet(row, timeout=None):
     # health check doGet serves, which means the POST never reached doPost -
     # counting that as success would mark the quotation synced and quietly lose
     # the row.  Better to fail loudly and keep it in the pending list.
+    if dry_run:
+        return result
     if not result.get("row") and result.get("via") != "doPost":
         raise RuntimeError(
             "The sheet answered its health check instead of adding the row, so "

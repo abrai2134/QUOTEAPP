@@ -19,7 +19,8 @@ from .mailer import MailNotConfigured, is_configured as mail_configured, send_qu
 from .order_sheet import (COLUMNS as SHEET_COLUMNS, HEADINGS, MIRROR_PATH,
                           SAVE_TIMEOUT, STD_FILES,
                           build_row, fetch_rows, is_configured as sheet_configured,
-                          new_sheet_id, push_to_sheet, row_to_quote, sheet_health,
+                          clean_url, new_sheet_id, push_to_sheet, row_to_quote,
+                          sheet_health, url_complaint,
                           sheet_url,
                           sync_quote)
 from .print_view import render as render_print_view
@@ -394,9 +395,14 @@ def read_settings():
 def write_settings():
     data = request.get_json(force=True)
     for key in ("default_terms", "default_company", "sheet_webapp_url", "sheet_secret"):
-        if key in data:
-            set_setting(key, (data[key] or "").strip() if isinstance(data[key], str)
-                        else data[key])
+        if key not in data:
+            continue
+        value = data[key]
+        if key == "sheet_webapp_url":
+            value = clean_url(value)
+        elif isinstance(value, str):
+            value = value.strip()
+        set_setting(key, value)
     return jsonify({
         "default_terms": get_setting("default_terms", DEFAULT_TERMS),
         "default_company": get_setting("default_company", ""),
@@ -817,17 +823,39 @@ def sheet_test():
     """Check the Apps Script URL by sending a row the script ignores."""
     data = request.get_json(force=True) or {}
     if "sheet_webapp_url" in data:
-        set_setting("sheet_webapp_url", (data.get("sheet_webapp_url") or "").strip())
+        set_setting("sheet_webapp_url", clean_url(data.get("sheet_webapp_url")))
         set_setting("sheet_secret", (data.get("sheet_secret") or "").strip())
     if not sheet_configured():
         return jsonify({"ok": False, "error": "Paste the web app URL first."}), 400
+    # A URL that looks wrong is worth saying so, but never a reason to refuse
+    # to try: if it works, it works.  The complaint is added to the failure.
+    complaint = url_complaint(sheet_url())
     try:
-        health = sheet_health()
-        fetch_rows(limit=1)
+        health = sheet_health()          # reading
+        fetch_rows(limit=1)              # reading rows back
+        # Only a script that says it understands a test row gets sent one -
+        # an older copy would take it as a real quotation and append it.
+        probe = (push_to_sheet(build_row({}), dry_run=True)
+                 if health.get("canTest") else None)
     except RuntimeError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 502
+        error = str(exc)
+        if complaint:
+            error += f" Also: {complaint}"
+        return jsonify({"ok": False, "error": error}), 502
 
-    message = "Sheet is connected. Nothing was written to it."
+    if probe is None:
+        return jsonify({"ok": True, "message":
+            "Reading from the sheet works, but this is an older copy of the "
+            "script, so the part that adds rows could not be checked without "
+            "writing one. Re-paste Code.gs into the script editor and deploy a "
+            "New version to have this tested too."}), 200
+    if not probe.get("test"):
+        return jsonify({"ok": False, "error":
+            "The script answered, but not from the part that adds rows. "
+            "Re-paste Code.gs into the script editor, then Deploy > Manage "
+            "deployments > pencil > Version: New version."}), 502
+
+    message = "Sheet is connected, reading and writing. Nothing was written to it."
     if health.get("file"):
         message += f" File: {health['file']}."
     # Google reads and writes the dates in the spreadsheet's own timezone, so a
