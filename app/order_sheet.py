@@ -19,6 +19,7 @@ import csv
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime
@@ -232,3 +233,112 @@ def sync_quote(quote):
     except RuntimeError as exc:
         return False, str(exc)
     return True, f"Added to the Order items sheet at {now()}."
+
+
+def fetch_rows(limit=500):
+    """Read the most recent Order items rows back out of the sheet.
+
+    Used to repopulate the quotations list on a server that started with an
+    empty disk, and to pick up rows a colleague raised elsewhere.
+    """
+    url = sheet_url()
+    if not url:
+        raise RuntimeError("No Google Sheet is connected yet.")
+
+    secret = get_setting("sheet_secret", "") or ""
+    query = f"{url}?action=rows&limit={int(limit)}"
+    if secret:
+        query += f"&secret={urllib.parse.quote(secret)}"
+
+    try:
+        with urllib.request.urlopen(query, timeout=SYNC_TIMEOUT) as response:
+            body = response.read().decode("utf-8", "replace").strip()
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"The sheet refused the request (HTTP {exc.code}).") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not reach the sheet: {exc.reason}") from exc
+
+    try:
+        result = json.loads(body)
+    except ValueError:
+        raise RuntimeError("The sheet replied with a sign-in page. Re-deploy the "
+                           "Apps Script with 'Who has access: Anyone'.")
+    if not result.get("ok"):
+        raise RuntimeError(result.get("error") or "The sheet refused the request.")
+    rows = result.get("rows") or []
+    if rows and "rows" not in result:
+        raise RuntimeError("This Apps Script is an older version - paste the "
+                           "current Code.gs in and re-deploy it.")
+    return rows
+
+
+def _num(value):
+    try:
+        return float(str(value).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def row_to_quote(row):
+    """Turn one sheet row back into the quote/items shape the app stores."""
+    items = []
+    for slot in range(1, ITEM_SLOTS + 1):
+        description = str(row.get(f"MACHINE{slot}") or "").strip()
+        model = str(row.get(f"MODEL{slot}") or "").strip()
+        if not description and not model:
+            continue
+        qty = _num(row.get(f"QTY{slot}"))
+        rate = _num(row.get(f"RATE{slot}"))
+        gst = _num(row.get(f"GST{slot}"))
+        items.append({
+            "position": len(items) + 1,
+            "model": model,
+            "description": description,
+            # Stored as a fraction in the sheet, as a percentage in the app.
+            "gst_percent": gst * 100 if gst <= 1 else gst,
+            "qty": qty,
+            "rate": rate,
+            "amount": _num(row.get(f"SUB TOTAL{slot}")) or round(qty * rate, 2),
+        })
+
+    made_by = str(row.get("Made By ") or "").strip()
+    name, _, phone = made_by.partition(" ")
+
+    return {
+        "sheet_id": str(row.get("ID") or "").strip(),
+        "heading": str(row.get("HEADING ") or "QUOTATION").strip(),
+        "std_file": str(row.get("STD FILE") or "").strip(),
+        "quote_date": _sheet_datetime(row.get("Date ")),
+        "company_name": str(row.get("M/S") or "").strip(),
+        "party_name": str(row.get("PARTY") or "").strip(),
+        "party_address": str(row.get("PARTY ADD") or "").strip(),
+        "city": str(row.get("CITY") or "").strip(),
+        "party_email": str(row.get("EMAILID") or "").strip(),
+        "whatsapp_no": str(row.get("WHATSAPP NO") or "").strip(),
+        "cc_to_client": str(row.get("CC TO CLIENT") or "NO").strip(),
+        "salesperson": name,
+        "salesperson_phone": phone.strip(),
+        "order_status": str(row.get("ORDER STATUS ") or "").strip(),
+        "payment_status": str(row.get("PAYMENT STATUS") or "").strip(),
+        "dispatch": str(row.get("DISPATCH STATUS") or "").strip(),
+        "dispatch_qty": _num(row.get("DISPATCH QTY")),
+        "advance": _num(row.get("ADVANCE RECEIVE")),
+        "gst_amount": _num(row.get("GST AMT")),
+        "grand_total": _num(row.get("G TOTAL")),
+        "balance": _num(row.get("BALANCE PAYABLE")),
+        "terms": str(row.get("DELIVERY PAYMENT NOTES") or "").strip(),
+        "reminder_date": _sheet_datetime(row.get("REMINDER DATE")),
+        "followup1": _sheet_datetime(row.get("FOLLOWUP DATE 1")),
+        "remarks1": str(row.get("REMARKS1") or "").strip(),
+        "items": items,
+    }
+
+
+def _sheet_datetime(value):
+    """Sheet dates come back as ISO text; store them the way the app does."""
+    if not value:
+        return ""
+    parsed = _parse(str(value)[:19].replace("Z", ""))
+    if parsed:
+        return parsed.strftime("%Y-%m-%d %H:%M:%S")
+    return str(value).strip()

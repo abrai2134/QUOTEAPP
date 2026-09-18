@@ -62,10 +62,15 @@ seconds). Then open **<http://localhost:5000>** in your browser.
 on the same Wi-Fi. On an iPhone, tap Share → *Add to Home Screen* and it behaves
 like the AppSheet app did.
 
-**To give the whole team a link**, see **[DEPLOY.md](DEPLOY.md)** — one hosted
-copy of the app means every quotation anybody raises goes into your Order items
-sheet by itself. Set `QUOTEAPP_PIN` in `.env` first; the app then asks for that
-PIN once per device.
+**To give the whole team an always-online link**, see **[DEPLOY.md](DEPLOY.md)**.
+One hosted copy means every quotation anybody raises goes into your Order items
+sheet by itself, from any phone, at any hour. The repository carries a
+`render.yaml`, so Render can set it up from the repository in about fifteen
+minutes. Set `QUOTEAPP_PIN` first and the app asks for that PIN once per device.
+
+Once it is hosted, everyone should open the address on their phone and use
+**Add to Home Screen** — it then behaves like an installed app, full screen,
+with its own icon.
 
 ---
 
@@ -113,6 +118,11 @@ small Apps Script lives in your own Google account and appends the rows. The
 steps are in **[`google-apps-script/README.md`](google-apps-script/README.md)**.
 Then paste the web app URL into **Setup → Google Sheet** and press **Test the
 connection**.
+
+The sheet is also read **back**: **Setup → Bring in quotations from the sheet**
+pulls in rows the app does not have, which is how a hosted server repopulates
+its list after a restart and how one person sees quotations another raised. A
+server that started on an empty disk does this by itself.
 
 **Nothing is ever lost if the sheet is unreachable.** Every row is written to
 `instance/order_items.csv` first. A quotation that did not reach the sheet shows
@@ -211,7 +221,9 @@ app/
   db.py           database schema
   seed.py         CSV import
   quote_xlsx.py   the workbook generator - a faithful rebuild of your template
-  order_sheet.py  builds the 75-column Order items row and sends it to the sheet
+  order_sheet.py  builds the 75-column Order items row, sends it to the sheet
+                  and reads rows back
+  auth.py         the optional team PIN
   print_view.py   the A4 HTML view used for Print → Save as PDF
   mailer.py       SMTP sending
   static/         the app itself (index.html, app.js, style.css)

@@ -1,0 +1,22 @@
+# One-click deploy to Render.  In Render: New > Blueprint, point it at this
+# repository, then set QUOTEAPP_PIN when it asks.
+services:
+  - type: web
+    name: wellworth-quotations
+    runtime: python
+    plan: starter            # the free plan has no disk, so quotations would be
+                             # lost on every restart; starter keeps the disk
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.main
+    healthCheckPath: /health
+    envVars:
+      - key: QUOTEAPP_PIN
+        sync: false          # Render asks you for this when you deploy
+      - key: QUOTEAPP_HTTPS
+        value: "1"
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+    disk:
+      name: quoteapp-data
+      mountPath: /opt/render/project/src/instance
+      sizeGB: 1

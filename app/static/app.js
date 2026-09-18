@@ -897,6 +897,23 @@ $('#btnSyncPending').onclick = async (e) => {
   }
 };
 
+$('#btnSheetPull').onclick = async (e) => {
+  const btn = e.currentTarget;
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Reading the sheet…';
+  try {
+    const res = await api('/api/sheet/pull', { method: 'POST', body: JSON.stringify({}) });
+    toast(res.message);
+    await loadQuotes();
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+};
+
 $('#btnMirror').onclick = () => { window.location = '/api/order-items.csv'; };
 $('#btnExportParties').onclick = () => { window.location = '/api/export/clients.csv'; };
 $('#btnExportMachines').onclick = () => { window.location = '/api/export/machines.csv'; };

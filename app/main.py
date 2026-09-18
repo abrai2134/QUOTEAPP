@@ -14,8 +14,9 @@ from . import auth
 from .db import DEFAULT_TERMS, INSTANCE_DIR, get_db, get_setting, init_db, now, set_setting
 from .mailer import MailNotConfigured, is_configured as mail_configured, send_quote
 from .order_sheet import (COLUMNS as SHEET_COLUMNS, HEADINGS, MIRROR_PATH, STD_FILES,
-                          build_row, is_configured as sheet_configured, new_sheet_id,
-                          push_to_sheet, sheet_url, sync_quote)
+                          build_row, fetch_rows, is_configured as sheet_configured,
+                          new_sheet_id, push_to_sheet, row_to_quote, sheet_url,
+                          sync_quote)
 from .print_view import render as render_print_view
 from .quote_xlsx import build_filename, generate_quote_xlsx, xlsx_to_pdf
 
@@ -652,6 +653,78 @@ def sync_pending():
     return jsonify({"synced": done, "failed": failed, "error": last_error})
 
 
+def pull_from_sheet(limit=500):
+    """Import sheet rows the app does not have yet.  Returns (added, skipped)."""
+    rows = fetch_rows(limit)
+    conn = get_db()
+    known = {r["sheet_id"] for r in conn.execute(
+        "SELECT sheet_id FROM quotes WHERE COALESCE(sheet_id, '') <> ''")}
+    companies = {r["name"]: r["id"] for r in conn.execute("SELECT id, name FROM companies")}
+
+    added = skipped = 0
+    for row in rows:
+        quote = row_to_quote(row)
+        sheet_id = quote.get("sheet_id")
+        # Rows with no id, or ones already held, are left alone.
+        if (not sheet_id or sheet_id in known or not quote.get("party_name")
+                or sheet_id.upper() == "CONNECTION TEST"
+                or quote.get("heading", "").upper() == "CONNECTION TEST"):
+            skipped += 1
+            continue
+        known.add(sheet_id)
+
+        cur = conn.execute(
+            """INSERT INTO quotes (sheet_id, quote_date, heading, std_file, company_id,
+                   party_name, party_address, city, party_email, whatsapp_no,
+                   cc_to_client, salesperson, salesperson_phone, order_status,
+                   payment_status, dispatch, dispatch_qty, reminder_date, followup1,
+                   remarks1, advance, gst_percent, terms, subtotal, gst_amount,
+                   grand_total, balance, synced_at, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (sheet_id, quote["quote_date"] or now(), quote["heading"], quote["std_file"],
+             companies.get(quote["company_name"]), quote["party_name"],
+             quote["party_address"], quote["city"], quote["party_email"],
+             quote["whatsapp_no"], quote["cc_to_client"], quote["salesperson"],
+             quote["salesperson_phone"], quote["order_status"], quote["payment_status"],
+             quote["dispatch"], quote["dispatch_qty"], quote["reminder_date"],
+             quote["followup1"], quote["remarks1"], quote["advance"],
+             quote["items"][0]["gst_percent"] if quote["items"] else 18,
+             quote["terms"],
+             round(quote["grand_total"] - quote["gst_amount"], 2),
+             quote["gst_amount"], quote["grand_total"], quote["balance"],
+             now(), now(), now()))
+
+        for item in quote["items"]:
+            conn.execute(
+                """INSERT INTO quote_items (quote_id, position, model, description,
+                       gst_percent, qty, rate, amount)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (cur.lastrowid, item["position"], item["model"], item["description"],
+                 item["gst_percent"], item["qty"], item["rate"], item["amount"]))
+        added += 1
+
+    conn.commit()
+    conn.close()
+    return added, skipped
+
+
+@app.post("/api/sheet/pull")
+def sheet_pull():
+    """Bring in quotations raised elsewhere, or recover after a server restart."""
+    if not sheet_configured():
+        return jsonify({"error": "Connect a Google Sheet first."}), 400
+    try:
+        added, skipped = pull_from_sheet(
+            int((request.get_json(silent=True) or {}).get("limit", 500)))
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 502
+    return jsonify({
+        "added": added, "skipped": skipped,
+        "message": f"{added} quotation(s) brought in, {skipped} already here.",
+    })
+
+
 @app.post("/api/sheet/test")
 def sheet_test():
     """Check the Apps Script URL by sending a row the script ignores."""
@@ -661,17 +734,12 @@ def sheet_test():
         set_setting("sheet_secret", (data.get("sheet_secret") or "").strip())
     if not sheet_configured():
         return jsonify({"ok": False, "error": "Paste the web app URL first."}), 400
-    probe = {c: "" for c in SHEET_COLUMNS}
-    probe["ID"] = "CONNECTION TEST"
-    probe["HEADING "] = "CONNECTION TEST"
-    probe["PARTY"] = "Connection test from the quotation app - this row can be deleted"
     try:
-        result = push_to_sheet(probe)
+        fetch_rows(limit=1)
     except RuntimeError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 502
-    return jsonify({"ok": True, "row": result.get("row"),
-                    "message": "Sheet is connected. A test row was added at row "
-                               f"{result.get('row')} - delete it when you like."})
+    return jsonify({"ok": True,
+                    "message": "Sheet is connected. Nothing was written to it."})
 
 
 # Column names match the CSV exports the databases came from, so a file
@@ -764,6 +832,28 @@ def email_quote(quote_id):
 def create_app():
     init_db()
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    # A hosted server may start on an empty disk, so import the master data
+    # when it is missing.  On a machine that already has it this is a no-op.
+    from .seed import main as seed_main
+    try:
+        seed_main()
+    except Exception as exc:                      # a bad CSV must not stop the app
+        app.logger.warning("Master data import skipped: %s", exc)
+
+    # Quotations live in the Google Sheet as well, so a server that lost its
+    # disk can repopulate its list from there.
+    try:
+        conn = get_db()
+        empty = conn.execute("SELECT COUNT(*) AS n FROM quotes").fetchone()["n"] == 0
+        conn.close()
+        if empty and sheet_configured():
+            added, _ = pull_from_sheet()
+            if added:
+                app.logger.info("Recovered %s quotation(s) from the sheet", added)
+    except Exception as exc:
+        app.logger.warning("Could not read quotations back from the sheet: %s", exc)
+
     return app
 
 

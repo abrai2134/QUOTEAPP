@@ -40,7 +40,59 @@ lands in the **Made By** column of the sheet.
 
 ---
 
-## Option A — your own PC, with a Cloudflare tunnel
+## Option A — always online, on Render *(recommended)*
+
+**Best if:** you want a link that works at any hour, from any phone, with
+nothing running in the office. About ₹600 a month.
+
+The repository already carries `render.yaml`, so Render sets everything up
+itself.
+
+1. Go to <https://render.com> and sign in with your GitHub account.
+2. **New → Blueprint**, and choose the `QUOTEAPP` repository. Pick the branch
+   `claude/appsheet-quote-generator-qhjvnu` (or `main`, once it is merged).
+3. Render reads `render.yaml` and shows one service. It asks for
+   **QUOTEAPP_PIN** — type the number your team will use.
+4. Press **Apply**. The first build takes five to ten minutes.
+5. You get an address like `https://wellworth-quotations.onrender.com`. That is
+   your app.
+
+On its first start it imports the party, machine and company databases by
+itself — nothing to run by hand.
+
+Then open the address, sign in with the PIN, go to **Setup → Google Sheet**,
+paste your Apps Script web app URL and press **Test the connection**. From that
+moment every quotation anybody raises goes into your Order items sheet.
+
+**Why the paid tier.** Render's free plan gives no permanent disk and puts the
+app to sleep after fifteen minutes, so the first person each morning waits
+about a minute and the app's own copy of the quotations is wiped on every
+restart. The Starter plan keeps a 1 GB disk mounted at `instance/` and stays
+awake. Your sheet is safe either way — see *Losing the disk* below — but the
+paid tier is the one to use in daily work.
+
+Any similar host works the same way: **Railway**, **Fly.io**, **DigitalOcean App
+Platform**. What matters is a persistent disk on `instance/` and permission to
+make outbound requests (so the app can reach your Apps Script).
+
+### Losing the disk
+
+The app is built so this is survivable, which is worth knowing before you
+depend on it:
+
+- The party, machine and company lists are rebuilt from the CSVs in `data/` on
+  every start.
+- The quotations are read back out of your **Order items** sheet — the sheet is
+  the record, so nothing is lost. There is also **Setup → Bring in quotations
+  from the sheet** to do it on demand.
+
+The one thing to write down somewhere is your **Apps Script web app URL**,
+since it lives in the database. Paste it back in under Setup after a wipe, or
+better, keep it out of harm's way by leaving the disk enabled.
+
+---
+
+## Option B — your own PC, with a Cloudflare tunnel
 
 **Best if:** the office PC is on during working hours and you want this today,
 free, with nothing to move.
@@ -71,45 +123,6 @@ documentation walks through it, and you can then point a name like
 
 ---
 
-## Option B — a small cloud host
-
-**Best if:** you would rather it was always on, and not tied to a PC in the
-office. Expect roughly ₹500–700 a month for the smallest paid tier, which is
-still far less than AppSheet per seat.
-
-Any host that runs a Python app works. What matters is that the host gives you a
-**persistent disk** mounted at `instance/`, because that folder holds your
-database. Free tiers usually wipe the disk on every restart — fine for a trial,
-not for your records.
-
-The repository is ready to deploy as it is:
-
-```
-Procfile         tells the host how to start the app
-requirements.txt the two libraries it needs
-```
-
-On the host, set these environment variables:
-
-```
-QUOTEAPP_PIN=4321
-QUOTEAPP_HTTPS=1
-PORT                 (most hosts set this for you)
-```
-
-Then open the app once, go to **Setup → Google Sheet**, paste your Apps Script
-web app URL and press **Test the connection** — exactly as you would locally.
-
-After the first start, import your master data once:
-
-```
-python -m app.seed
-```
-
-Most hosts let you run that from a console in their dashboard.
-
----
-
 ## Option C — leave it on your PC, team uses the web page
 
 **Best if:** only one or two people raise quotations, and the rest just need to
@@ -129,13 +142,22 @@ are findable, but it is work you would not have with Option A or B.
 
 | | Team reach | Sheet updated | Cost | Effort |
 |---|---|---|---|---|
-| **A · Cloudflare tunnel** | Anywhere, while the PC is on | Automatically | Free | 10 minutes |
-| **B · Cloud host** | Anywhere, always | Automatically | ~₹500/month | An hour |
+| **A · Render** | Anywhere, always | Automatically | ~₹600/month | 15 minutes |
+| **B · Cloudflare tunnel** | Anywhere, while the PC is on | Automatically | Free | 10 minutes |
 | **C · Web page + export** | Anywhere, always | You import daily | Free | Nothing to set up |
 
-Start with **A**. It costs nothing, it takes ten minutes, and if the office PC
-being on becomes a nuisance you can move to **B** later without changing
-anything about how the app works — same code, same sheet, same PIN.
+For a team raising quotations through the day, **A**. Moving between them
+changes nothing about how the app works — same code, same sheet, same PIN.
+
+## Putting it on your team's phones
+
+The app installs like a real app, no store needed:
+
+- **Android / Chrome** — open the address, menu **⋮ → Add to Home screen**.
+- **iPhone / Safari** — open the address, **Share → Add to Home Screen**.
+
+It then opens full screen with its own icon, and the PIN is remembered for 30
+days. Tell your team to do this once and they will not think about it again.
 
 ---
 

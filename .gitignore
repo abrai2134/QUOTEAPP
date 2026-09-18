@@ -1,5 +1,7 @@
-.venv/
-__pycache__/
+
+# local virtualenv used by run.sh
 *.pyc
 .env
+.venv/
+__pycache__/
 instance/

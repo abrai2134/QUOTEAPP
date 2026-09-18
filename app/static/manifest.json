@@ -1,0 +1,19 @@
+{
+  "name": "Well Worth Quotations",
+  "short_name": "Quotations",
+  "description": "Raise quotations and proformas, and record them in the Order items sheet.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#eef1f6",
+  "theme_color": "#0f2d52",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

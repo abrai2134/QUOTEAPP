@@ -52,9 +52,50 @@ function doPost(e) {
   }
 }
 
-function doGet() {
-  // Opening the URL in a browser confirms the deployment is live.
-  return reply({ ok: true, message: 'Well Worth quote sync is running.' });
+/**
+ * doGet serves two things:
+ *   ?action=rows&limit=500   the most recent rows, so the app can rebuild its
+ *                            list after a restart and pick up quotations
+ *                            raised by the rest of the team
+ *   anything else            a health check you can open in a browser
+ */
+function doGet(e) {
+  try {
+    var params = (e && e.parameter) || {};
+    if (params.action !== 'rows') {
+      return reply({ ok: true, message: 'Well Worth quote sync is running.' });
+    }
+    if (SHARED_SECRET && params.secret !== SHARED_SECRET) {
+      return reply({ ok: false, error: 'Wrong secret word.' });
+    }
+
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+    if (!sheet) {
+      return reply({ ok: false, error: 'No sheet named "' + SHEET_NAME + '" in this file.' });
+    }
+
+    var lastRow = sheet.getLastRow();
+    var lastCol = sheet.getLastColumn();
+    if (lastRow < 2) return reply({ ok: true, rows: [] });
+
+    var limit = Math.min(Number(params.limit) || 500, 2000);
+    var start = Math.max(2, lastRow - limit + 1);
+    var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+    var values = sheet.getRange(start, 1, lastRow - start + 1, lastCol).getValues();
+
+    var rows = values.map(function (line) {
+      var row = {};
+      headers.forEach(function (header, i) {
+        var value = line[i];
+        // Dates go back as ISO text so any client can read them.
+        row[header] = (value instanceof Date) ? value.toISOString() : value;
+      });
+      return row;
+    });
+    return reply({ ok: true, rows: rows, total: lastRow - 1 });
+  } catch (err) {
+    return reply({ ok: false, error: String(err) });
+  }
 }
 
 /** Headers are compared without case, spaces or punctuation. */

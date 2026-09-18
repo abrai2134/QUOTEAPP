@@ -38,6 +38,7 @@ lives inside your own Google account and only ever appends rows.
 1. In the quotation app open **Setup → Google Sheet**.
 2. Paste the Web app URL (and the secret word, if you set one).
 3. Press **Test the connection** — it should answer *Sheet is connected*.
+   The test only reads; it never writes a row into your sheet.
 
 From now on, every quotation you save is added to the sheet straight away.
 

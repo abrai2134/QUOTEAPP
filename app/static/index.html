@@ -6,6 +6,10 @@
 <meta name="theme-color" content="#0f2d52">
 <title>Well Worth Quotation App</title>
 <link rel="stylesheet" href="style.css">
+<link rel="manifest" href="manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Quotations">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📄</text></svg>">
 </head>
 <body>
@@ -275,6 +279,7 @@
       </label>
       <button class="primary" id="btnSheetTest">Test the connection</button>
       <button class="ghost" id="btnSyncPending">Sync all pending</button>
+      <button class="ghost" id="btnSheetPull">Bring in quotations from the sheet</button>
       <button class="ghost" id="btnMirror">Download the local copy (CSV)</button>
       <p class="hint">
         Setup takes five minutes, once — the steps are in
