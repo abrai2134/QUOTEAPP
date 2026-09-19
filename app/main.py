@@ -99,6 +99,22 @@ def rows_to_dicts(rows):
     return [dict(r) for r in rows]
 
 
+# The form sends what a datetime-local box holds, which is "2026-09-19 13:32"
+# on some browsers and "...:07" on others.  Either way it is stored the one way
+# the rest of the app reads.
+STAMP_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d")
+
+
+def normalise_stamp(value):
+    text = str(value or "").strip().replace("T", " ")
+    for fmt in STAMP_FORMATS:
+        try:
+            return datetime.strptime(text, fmt).strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+    return ""
+
+
 def as_float(value, default=0.0):
     try:
         return float(value)
@@ -507,7 +523,7 @@ def persist_quote(data, quote_id=None):
     items, subtotal, gst_amount, grand_total, balance = compute_totals(
         data.get("items", []), gst_percent, advance)
 
-    quote_date = data.get("quote_date") or now()
+    quote_date = normalise_stamp(data.get("quote_date")) or now()
     fields = (
         data.get("quote_no", ""), quote_date,
         data.get("heading") or "QUOTATION", data.get("std_file") or "NON STD FILE",

@@ -334,6 +334,9 @@ function newQuote() {
   $('#fPaymentStatus').value = 'PENDING';
   $('#fDispatchQty').value = 0;
   $('#fReminder').value = defaultReminder();
+  // Stamped with the moment the quotation is started, so the list shows who
+  // raised it and when.  Editable, for one written up after the fact.
+  $('#fQuoteDate').value = nowLocalISO();
   applyRememberedUser();
   $('#fFollow1').value = todayISO();
   $('#fRemarks1').value = '';
@@ -366,6 +369,7 @@ function fillForm(q) {
   $('#fCcClient').value = q.cc_to_client || 'NO';
   $('#fPaymentStatus').value = q.payment_status || 'PENDING';
   $('#fDispatchQty').value = q.dispatch_qty || 0;
+  $('#fQuoteDate').value = (q.quote_date || '').slice(0, 19).replace(' ', 'T');
   $('#fReminder').value = (q.reminder_date || '').slice(0, 10);
   $('#fFollow1').value = (q.followup1 || '').slice(0, 10);
   $('#fRemarks1').value = q.remarks1 || '';
@@ -587,6 +591,7 @@ $('#btnSaveQuote').onclick = async () => {
     client_id: state.clientId,
     heading: $('#fHeading').value,
     std_file: $('#fStdFile').value,
+    quote_date: $('#fQuoteDate').value.replace('T', ' '),
     party_name: $('#fParty').value.trim(),
     party_address: $('#fPartyAddress').value,
     city: $('#fCity').value.trim(),
@@ -608,6 +613,8 @@ $('#btnSaveQuote').onclick = async () => {
     items: state.items,
   };
   if (!payload.party_name) return toast('Party name is required', true);
+  // Without this the Made By column is blank and nobody can tell who raised it.
+  if (!payload.salesperson) return toast('Pick who this is prepared by', true);
   if (!payload.items.some((i) => i.description || i.model)) {
     return toast('Add at least one item', true);
   }
@@ -997,6 +1004,13 @@ $('#btnAddSales').onclick = async () => {
 };
 
 /* ----------------------------------------------------------- utilities */
+
+// "2026-09-19T13:32:07" for a datetime-local box, in the phone's own clock.
+function nowLocalISO() {
+  const d = new Date();
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+    .toISOString().slice(0, 19);
+}
 
 function todayISO() {
   const d = new Date();
