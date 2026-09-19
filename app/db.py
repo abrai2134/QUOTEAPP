@@ -266,5 +266,37 @@ def to_local(value):
     return value.astimezone(LOCAL_TZ)
 
 
+# Google reports the old names for these zones, and a trimmed timezone
+# database may not carry the links, so they are resolved here first.
+ZONE_ALIASES = {
+    "Asia/Calcutta": "Asia/Kolkata",
+    "Asia/Dacca": "Asia/Dhaka",
+    "Asia/Katmandu": "Asia/Kathmandu",
+    "Asia/Rangoon": "Asia/Yangon",
+    "Asia/Saigon": "Asia/Ho_Chi_Minh",
+}
+
+
+def same_zone(name):
+    """Does this timezone name keep the same clock as ours?
+
+    Comparing the names alone does not work: Asia/Calcutta is the old name for
+    Asia/Kolkata and that is what Google reports, so a sheet that is set
+    correctly would be called wrong.  What matters is whether the clock agrees.
+    """
+    if not name:
+        return True
+    text = str(name).strip()
+    text = ZONE_ALIASES.get(text, text)
+    if text == ZONE_ALIASES.get(TIMEZONE, TIMEZONE):
+        return True
+    try:
+        from zoneinfo import ZoneInfo
+        moment = datetime.now(LOCAL_TZ)
+        return moment.utcoffset() == moment.astimezone(ZoneInfo(text)).utcoffset()
+    except Exception:        # unknown name, or no timezone database
+        return False
+
+
 def now():
     return local_now().strftime("%Y-%m-%d %H:%M:%S")

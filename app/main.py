@@ -14,7 +14,7 @@ from werkzeug.exceptions import HTTPException
 from . import auth
 
 from .db import (DEFAULT_TERMS, INSTANCE_DIR, TIMEZONE, get_db, get_setting,
-                 init_db, local_now, now, set_setting, squeeze)
+                 init_db, local_now, now, same_zone, set_setting, squeeze)
 from .mailer import MailNotConfigured, is_configured as mail_configured, send_quote
 from .order_sheet import (COLUMNS as SHEET_COLUMNS, HEADINGS, MIRROR_PATH,
                           SAVE_TIMEOUT, STD_FILES,
@@ -861,10 +861,11 @@ def sheet_test():
     # Google reads and writes the dates in the spreadsheet's own timezone, so a
     # sheet set to another country stamps every quotation at the wrong time.
     zone = health.get("timezone")
-    if zone and zone != TIMEZONE:
-        message += (f" Warning: the sheet's timezone is {zone}, not {TIMEZONE} - "
-                    "quotation dates will be hours out. Change it in the sheet "
-                    "under File > Settings > Time zone.")
+    if zone and not same_zone(zone):
+        message += (f" Warning: the sheet's timezone is {zone}, which keeps a "
+                    f"different clock from {TIMEZONE} - quotation dates will be "
+                    "hours out. Change it in the sheet under File > Settings > "
+                    "Time zone.")
     return jsonify({"ok": True, "message": message, "timezone": zone})
 
 
