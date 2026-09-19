@@ -47,6 +47,13 @@ async function api(path, options = {}) {
   return data;
 }
 
+// What happened to the copy in the Google Sheet, when there is anything to
+// say.  A sheet that is unreachable never stops the record being saved here.
+function sheetNote(saved) {
+  if (!saved || !saved.sheet_message) return '';
+  return saved.sheet_synced ? ' · in the sheet' : ` · not in the sheet: ${saved.sheet_message}`;
+}
+
 let toastTimer;
 function toast(message, isError = false) {
   const el = $('#toast');
@@ -708,7 +715,7 @@ $('#btnSaveParty').onclick = async () => {
   try {
     const saved = await saveParty();
     if (!saved) return;
-    toast(`${saved.party} saved`);
+    toast(`${saved.party} saved${sheetNote(saved)}`, saved.sheet_message && !saved.sheet_synced);
     await loadClients($('#clientSearch').value);
     show('clients');
   } catch (err) { toast(err.message, true); }
@@ -759,13 +766,11 @@ $('#btnSaveMachine').onclick = async () => {
   };
   if (!data.model) return toast('Model code is required', true);
   try {
-    if (state.editingMachine) {
-      await api(`/api/machines/${state.editingMachine.id}`,
-                { method: 'PUT', body: JSON.stringify(data) });
-    } else {
-      await api('/api/machines', { method: 'POST', body: JSON.stringify(data) });
-    }
-    toast(`${data.model} saved`);
+    const saved = state.editingMachine
+      ? await api(`/api/machines/${state.editingMachine.id}`,
+                  { method: 'PUT', body: JSON.stringify(data) })
+      : await api('/api/machines', { method: 'POST', body: JSON.stringify(data) });
+    toast(`${data.model} saved${sheetNote(saved)}`, saved.sheet_message && !saved.sheet_synced);
     await loadMachines($('#machineSearch').value);
     show('machines');
   } catch (err) { toast(err.message, true); }

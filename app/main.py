@@ -20,7 +20,8 @@ from .order_sheet import (COLUMNS as SHEET_COLUMNS, HEADINGS, MIRROR_PATH,
                           SAVE_TIMEOUT, STD_FILES,
                           build_row, fetch_rows, is_configured as sheet_configured,
                           clean_url, new_sheet_id, push_to_sheet, row_to_quote,
-                          sheet_health, url_complaint,
+                          sheet_health, sync_machine, sync_party,
+                          url_complaint,
                           sheet_url,
                           sync_quote)
 from .print_view import render as render_print_view
@@ -113,6 +114,16 @@ def normalise_stamp(value):
         except ValueError:
             continue
     return ""
+
+
+def with_sheet_note(record, sync):
+    """Mirror a party or machine into its tab in the sheet.
+
+    A sheet that is unreachable never blocks the save - the record is already
+    stored, and the reply carries what happened so the screen can say so.
+    """
+    done, message = sync(record)
+    return {**record, "sheet_synced": done, "sheet_message": message}
 
 
 def as_float(value, default=0.0):
@@ -265,7 +276,7 @@ def create_client():
     conn.commit()
     row = conn.execute("SELECT * FROM clients WHERE id = ?", (cur.lastrowid,)).fetchone()
     conn.close()
-    return jsonify(dict(row)), 201
+    return jsonify(with_sheet_note(dict(row), sync_party)), 201
 
 
 @app.put("/api/clients/<int:client_id>")
@@ -285,7 +296,7 @@ def update_client(client_id):
     conn.commit()
     row = conn.execute("SELECT * FROM clients WHERE id = ?", (client_id,)).fetchone()
     conn.close()
-    return jsonify(dict(row) if row else {})
+    return jsonify(with_sheet_note(dict(row), sync_party) if row else {})
 
 
 @app.delete("/api/clients/<int:client_id>")
@@ -349,7 +360,7 @@ def create_machine():
     conn.commit()
     row = conn.execute("SELECT * FROM machines WHERE id = ?", (cur.lastrowid,)).fetchone()
     conn.close()
-    return jsonify(dict(row)), 201
+    return jsonify(with_sheet_note(dict(row), sync_machine)), 201
 
 
 @app.put("/api/machines/<int:machine_id>")
@@ -364,7 +375,7 @@ def update_machine(machine_id):
     conn.commit()
     row = conn.execute("SELECT * FROM machines WHERE id = ?", (machine_id,)).fetchone()
     conn.close()
-    return jsonify(dict(row) if row else {})
+    return jsonify(with_sheet_note(dict(row), sync_machine) if row else {})
 
 
 @app.delete("/api/machines/<int:machine_id>")

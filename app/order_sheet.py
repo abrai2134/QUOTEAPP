@@ -291,6 +291,110 @@ def push_to_sheet(row, timeout=None, dry_run=False):
     return result
 
 
+# The Party and Machines tabs alongside Order items.  Column names match the
+# AppSheet CSV exports the databases came from; the script matches them against
+# whatever the tab's own header row says, so columns you have added by hand or
+# reordered are left alone.
+PARTY_TAB = "Party"
+MACHINE_TAB = "Machines"
+
+
+def party_values(client):
+    return {
+        "PARTY": client.get("party", ""),
+        "PARTY ADD": client.get("address", ""),
+        "PARTY ADD2": client.get("address2", ""),
+        "CITY": client.get("city", ""),
+        "CELL NO": client.get("cell_no", ""),
+        "CELLNO2": client.get("cell_no2", ""),
+        "EMAILID": client.get("email", ""),
+        "EMAILID2": client.get("email2", ""),
+        "GST NO": client.get("gst_no", ""),
+        "REMARKS": client.get("remarks", ""),
+        "ENTRY BY": client.get("entry_by", ""),
+    }
+
+
+def machine_values(machine):
+    return {
+        "MODEL1": machine.get("model", ""),
+        "MACHINE1": machine.get("description", ""),
+        "RATE1": machine.get("rate", 0),
+        "ENTRY BY": machine.get("entry_by", ""),
+    }
+
+
+def push_record(tab, key, match, values, timeout=None, dry_run=False):
+    """Add or update one row in a tab other than Order items."""
+    url = sheet_url()
+    if not url:
+        raise RuntimeError("No Google Sheet is connected yet.")
+
+    payload = json.dumps({
+        "secret": get_setting("sheet_secret", "") or "",
+        "test": bool(dry_run),
+        "record": {"tab": tab, "key": key, "match": match, "values": values},
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        url, data=payload,
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout or SAVE_TIMEOUT) as response:
+            body = response.read().decode("utf-8", "replace").strip()
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"The sheet refused the row (HTTP {exc.code}).") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not reach the sheet: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise RuntimeError("The sheet did not answer in time.") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Could not reach the sheet: {exc}") from exc
+
+    try:
+        result = json.loads(body)
+    except ValueError:
+        raise RuntimeError("The sheet replied with a sign-in page instead of a "
+                           "result. Re-deploy the Apps Script with "
+                           "'Who has access: Anyone'.")
+    if not result.get("ok"):
+        raise RuntimeError(result.get("error") or "The sheet rejected the row.")
+    if result.get("via") != "doPost":
+        raise RuntimeError(
+            "This copy of the script cannot write to the " + tab + " tab. "
+            "Re-paste Code.gs into the script editor and deploy a New version.")
+    return result
+
+
+def sync_party(client):
+    """Mirror a party into the sheet's Party tab.  Returns (done, message)."""
+    if not is_configured():
+        return False, ""
+    if not (client.get("party") or "").strip():
+        return False, ""
+    try:
+        result = push_record(PARTY_TAB, "PARTY", client["party"],
+                             party_values(client))
+    except Exception as exc:                      # noqa: BLE001
+        return False, str(exc) or exc.__class__.__name__
+    return True, ("Added to the Party tab." if result.get("added")
+                  else "Updated in the Party tab.")
+
+
+def sync_machine(machine):
+    """Mirror a machine into the sheet's Machines tab."""
+    if not is_configured():
+        return False, ""
+    if not (machine.get("model") or "").strip():
+        return False, ""
+    try:
+        result = push_record(MACHINE_TAB, "MODEL1", machine["model"],
+                             machine_values(machine))
+    except Exception as exc:                      # noqa: BLE001
+        return False, str(exc) or exc.__class__.__name__
+    return True, ("Added to the Machines tab." if result.get("added")
+                  else "Updated in the Machines tab.")
+
+
 def sync_quote(quote, timeout=None):
     """Mirror locally, then push to the sheet when one is connected.
 

@@ -130,6 +130,11 @@ a **NOT IN SHEET** tag in the list, the quotation itself has a **Send to the
 Order items sheet** button, and Setup has **Sync all pending** for everything
 still waiting.
 
+A party you add or edit in the app is written to the sheet's **Party** tab, and
+a machine to the **Machines** tab, matched on the party name or model code — so
+an existing row is updated in place rather than duplicated, and columns you
+keep by hand on that row are left untouched.
+
 Two things worth knowing:
 
 - The sheet has seven item slots, so only the first seven items of a quotation
