@@ -24,7 +24,7 @@ import urllib.request
 import uuid
 from datetime import datetime
 
-from .db import INSTANCE_DIR, get_setting, now, to_local
+from .db import INSTANCE_DIR, LOCAL_TZ, get_setting, now, to_local
 
 MIRROR_PATH = os.path.join(INSTANCE_DIR, "order_items.csv")
 ITEM_SLOTS = 7
@@ -74,12 +74,24 @@ def _parse(value):
     return None
 
 
+def _stamp(moment):
+    """ISO text carrying the India offset.
+
+    Without an offset, Apps Script reads the text in the *script project's*
+    timezone - a separate setting from the spreadsheet's, and one nobody thinks
+    to look at - so a quotation could land in the sheet hours off even with the
+    spreadsheet itself set correctly.  Naming the offset pins the instant, and
+    Google then shows it in the sheet's own timezone.
+    """
+    return moment.replace(tzinfo=LOCAL_TZ).isoformat()
+
+
 def _date(value):
     """Sheet dates go over the wire as ISO text; blanks stay blank."""
     if not value:
         return ""
     parsed = _parse(value)
-    return parsed.isoformat() if parsed else str(value).strip()
+    return _stamp(parsed) if parsed else str(value).strip()
 
 
 def _midnight(value):
@@ -87,7 +99,7 @@ def _midnight(value):
     parsed = _parse(value)
     if not parsed:
         return ""
-    return parsed.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    return _stamp(parsed.replace(hour=0, minute=0, second=0, microsecond=0))
 
 
 def build_row(quote):
