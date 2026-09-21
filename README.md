@@ -135,6 +135,12 @@ a machine to the **Machines** tab, matched on the party name or model code — s
 an existing row is updated in place rather than duplicated, and columns you
 keep by hand on that row are left untouched.
 
+Those two tabs are read **back** as well: **Setup → Bring in parties from the
+sheet** and **Bring in machines from the sheet** pick up anything added in the
+sheet itself, or by AppSheet. Rows are matched on the same name or code, so a
+party already here is updated rather than duplicated. A long tab comes in over
+a few presses; the message says how many are left.
+
 Two things worth knowing:
 
 - The sheet has seven item slots, so only the first seven items of a quotation

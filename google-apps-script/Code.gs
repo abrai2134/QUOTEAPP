@@ -181,6 +181,12 @@ function doGet(e) {
       return reply({ ok: false, error: 'Wrong secret word.' });
     }
 
+    // Rows from the Party or Machines tab, a page at a time, so the app can
+    // pick up records added in the sheet or by AppSheet.
+    if (params.action === 'records') {
+      return readRecords(SpreadsheetApp.getActiveSpreadsheet(), params);
+    }
+
     var sheet = pickSheet(SpreadsheetApp.getActiveSpreadsheet());
 
     var lastRow = sheet.getLastRow();
@@ -205,6 +211,35 @@ function doGet(e) {
   } catch (err) {
     return reply({ ok: false, error: String(err) });
   }
+}
+
+/** A page of rows from a named tab, as objects keyed by its header row. */
+function readRecords(book, params) {
+  var sheet = tabNamed(book, params.tab);
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  var total = Math.max(0, lastRow - 1);
+  var offset = Math.max(0, Number(params.offset) || 0);
+  var limit = Math.min(Number(params.limit) || 1000, 5000);
+  if (total === 0 || offset >= total) {
+    return reply({ ok: true, rows: [], total: total, offset: offset });
+  }
+
+  var start = 2 + offset;
+  var count = Math.min(limit, lastRow - start + 1);
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+  var values = sheet.getRange(start, 1, count, lastCol).getValues();
+
+  var rows = values.map(function (line) {
+    var row = {};
+    headers.forEach(function (header, i) {
+      var value = line[i];
+      row[header] = (value instanceof Date) ? value.toISOString() : value;
+    });
+    return row;
+  });
+  return reply({ ok: true, rows: rows, total: total,
+                 offset: offset, limit: limit });
 }
 
 /** Headers are compared without case, spaces or punctuation. */

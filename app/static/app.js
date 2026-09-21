@@ -972,6 +972,32 @@ $('#btnSyncPending').onclick = async (e) => {
   }
 };
 
+// The master tabs, read back the same way the quotations are - so a party
+// somebody added in the sheet, or in AppSheet, turns up here too.
+function wirePull(id, path, busy, after) {
+  $(id).onclick = async (e) => {
+    const btn = e.currentTarget;
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = busy;
+    try {
+      const res = await api(path, { method: 'POST', body: JSON.stringify({}) });
+      toast(res.message);
+      await after();
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  };
+}
+
+wirePull('#btnPullParties', '/api/sheet/pull-parties', 'Reading the Party tab…',
+         () => loadClients($('#clientSearch').value));
+wirePull('#btnPullMachines', '/api/sheet/pull-machines', 'Reading the Machines tab…',
+         () => loadMachines($('#machineSearch').value));
+
 $('#btnSheetPull').onclick = async (e) => {
   const btn = e.currentTarget;
   const label = btn.textContent;

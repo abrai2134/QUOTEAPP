@@ -16,15 +16,17 @@ from . import auth
 from .db import (DEFAULT_TERMS, INSTANCE_DIR, TIMEZONE, get_db, get_setting,
                  init_db, local_now, now, same_zone, set_setting, squeeze)
 from .mailer import MailNotConfigured, is_configured as mail_configured, send_quote
-from .order_sheet import (COLUMNS as SHEET_COLUMNS, HEADINGS, MIRROR_PATH,
+from .order_sheet import (COLUMNS as SHEET_COLUMNS, HEADINGS, MACHINE_TAB,
+                          MIRROR_PATH, PARTY_TAB,
                           SAVE_TIMEOUT, STD_FILES,
                           build_row, fetch_rows, is_configured as sheet_configured,
                           clean_url, new_sheet_id, push_to_sheet, row_to_quote,
-                          sheet_health, sync_machine, sync_party,
+                          fetch_records, sheet_health, sync_machine, sync_party,
                           url_complaint,
                           sheet_url,
                           sync_quote)
 from .print_view import render as render_print_view
+from .seed import normalise_email, normalise_gst, parse_rate
 from .quote_pdf import generate_quote_pdf
 from .quote_xlsx import build_filename, generate_quote_xlsx
 
@@ -843,6 +845,145 @@ def sheet_pull():
         "added": added, "skipped": skipped,
         "message": f"{added} quotation(s) brought in, {skipped} already here.",
     })
+
+
+# Reading the master tabs back.  Pages are pulled until the tab is exhausted
+# or the budget runs out, so a big Party tab comes in over a few presses rather
+# than one request the host gives up on.
+PULL_PAGE = 1000
+PULL_BUDGET = 35.0
+
+
+def pull_records(tab, apply_row):
+    """Read a master tab and hand each row to `apply_row`.
+
+    `apply_row(conn, row)` returns "added", "updated" or None.  Returns a
+    summary dict.
+    """
+    started = time.monotonic()
+    conn = get_db()
+    added = updated = skipped = 0
+    offset, total = 0, 0
+    try:
+        while True:
+            page = fetch_records(tab, PULL_PAGE, offset)
+            rows = page.get("rows") or []
+            total = page.get("total", 0)
+            if not rows:
+                break
+            for row in rows:
+                outcome = apply_row(conn, row)
+                if outcome == "added":
+                    added += 1
+                elif outcome == "updated":
+                    updated += 1
+                else:
+                    skipped += 1
+            conn.commit()
+            offset += len(rows)
+            if offset >= total or time.monotonic() - started > PULL_BUDGET:
+                break
+    finally:
+        conn.commit()
+        conn.close()
+    return {"added": added, "updated": updated, "skipped": skipped,
+            "read": offset, "total": total,
+            "remaining": max(0, total - offset)}
+
+
+def _pick(row, *names):
+    """The first of these columns that the sheet actually has."""
+    lookup = {squeeze(k): v for k, v in row.items()}
+    for name in names:
+        value = lookup.get(squeeze(name))
+        if value not in (None, ""):
+            return str(value).strip()
+    return ""
+
+
+def apply_party(conn, row):
+    party = _pick(row, "PARTY", "PARTY NAME", "M/S")
+    if not party:
+        return None
+    fields = (
+        _pick(row, "PARTY ADD", "PARTY ADDRESS", "ADDRESS"),
+        _pick(row, "PARTY ADD2", "ADDRESS2"),
+        _pick(row, "CITY"),
+        _pick(row, "CELL NO", "CELLNO", "PHONE"),
+        _pick(row, "CELLNO2", "CELL NO2"),
+        normalise_email(_pick(row, "EMAILID", "EMAIL")),
+        normalise_email(_pick(row, "EMAILID2", "EMAIL2")),
+        normalise_gst(_pick(row, "GST NO", "GSTNO", "GSTIN")),
+        _pick(row, "REMARKS"),
+        _pick(row, "ENTRY BY"),
+    )
+    existing = conn.execute(
+        "SELECT id FROM clients WHERE squeeze(party) = squeeze(?) LIMIT 1",
+        (party,)).fetchone()
+    if existing:
+        conn.execute(
+            """UPDATE clients SET address = ?, address2 = ?, city = ?,
+                   cell_no = ?, cell_no2 = ?, email = ?, email2 = ?,
+                   gst_no = ?, remarks = ?, entry_by = ?
+               WHERE id = ?""", fields + (existing["id"],))
+        return "updated"
+    conn.execute(
+        """INSERT INTO clients (party, address, address2, city, cell_no,
+               cell_no2, email, email2, gst_no, remarks, entry_by, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (party,) + fields + (now(),))
+    return "added"
+
+
+def apply_machine(conn, row):
+    model = _pick(row, "MODEL1", "MODEL", "MODEL CODE")
+    if not model:
+        return None
+    description = _pick(row, "MACHINE1", "MACHINE", "DESCRIPTION")
+    rate = parse_rate(_pick(row, "RATE1", "RATE"))
+    entry_by = _pick(row, "ENTRY BY")
+    existing = conn.execute(
+        "SELECT id FROM machines WHERE squeeze(model) = squeeze(?) LIMIT 1",
+        (model,)).fetchone()
+    if existing:
+        conn.execute(
+            "UPDATE machines SET description = ?, rate = ?, entry_by = ? WHERE id = ?",
+            (description, rate, entry_by, existing["id"]))
+        return "updated"
+    conn.execute(
+        "INSERT INTO machines (model, description, rate, entry_by, wed) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (model, description, rate, entry_by, local_now().strftime("%m/%d/%Y")))
+    return "added"
+
+
+MASTER_PULLS = {
+    "parties": (PARTY_TAB, apply_party, ("party", "parties")),
+    "machines": (MACHINE_TAB, apply_machine, ("machine", "machines")),
+}
+
+
+@app.post("/api/sheet/pull-<kind>")
+def sheet_pull_master(kind):
+    """Bring parties or machines in from their tab in the sheet."""
+    spec = MASTER_PULLS.get(kind)
+    if not spec:
+        return jsonify({"error": "Unknown table"}), 404
+    if not sheet_configured():
+        return jsonify({"error": "Connect a Google Sheet first."}), 400
+    tab, apply_row, (one, many) = spec
+    try:
+        summary = pull_records(tab, apply_row)
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 502
+
+    noun = one if summary["added"] == 1 else many
+    rows = "row" if summary["read"] == 1 else "rows"
+    message = (f"{summary['added']} new {noun}, {summary['updated']} updated, "
+               f"from {summary['read']} {rows}.")
+    if summary["remaining"]:
+        message += f" {summary['remaining']} still to read - press again."
+    return jsonify({**summary, "message": message})
 
 
 @app.post("/api/sheet/test")

@@ -491,6 +491,46 @@ def _num(value):
         return 0.0
 
 
+def fetch_records(tab, limit=1000, offset=0):
+    """A page of rows from the Party or Machines tab."""
+    url = sheet_url()
+    if not url:
+        raise RuntimeError("No Google Sheet is connected yet.")
+
+    query = (f"{url}?action=records&tab={urllib.parse.quote(tab)}"
+             f"&limit={int(limit)}&offset={int(offset)}")
+    secret = get_setting("sheet_secret", "") or ""
+    if secret:
+        query += f"&secret={urllib.parse.quote(secret)}"
+
+    try:
+        with urllib.request.urlopen(query, timeout=SYNC_TIMEOUT) as response:
+            body = response.read().decode("utf-8", "replace").strip()
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"The sheet refused the request (HTTP {exc.code}).") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not reach the sheet: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise RuntimeError(f"The sheet did not answer within {SYNC_TIMEOUT} "
+                           "seconds.") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Could not reach the sheet: {exc}") from exc
+
+    try:
+        result = json.loads(body)
+    except ValueError:
+        raise RuntimeError("The sheet replied with a sign-in page instead of "
+                           "rows. Re-deploy the Apps Script with "
+                           "'Who has access: Anyone'.")
+    if not result.get("ok"):
+        raise RuntimeError(result.get("error") or "The sheet refused the request.")
+    if "rows" not in result:
+        raise RuntimeError(
+            "This copy of the script cannot read the " + tab + " tab. Re-paste "
+            "Code.gs into the script editor and deploy a New version.")
+    return result
+
+
 def row_to_quote(row):
     """Turn one sheet row back into the quote/items shape the app stores."""
     items = []
