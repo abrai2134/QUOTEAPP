@@ -491,28 +491,40 @@ def _num(value):
         return 0.0
 
 
-def fetch_records(tab, limit=1000, offset=0):
-    """A page of rows from the Party or Machines tab."""
+# Reading a master tab is slower than one quotation: Apps Script has to wake up
+# and open a sheet with thousands of rows, which the ordinary timeout does not
+# allow for.
+READ_TIMEOUT = 40
+
+
+def fetch_records(tab, limit=300, back=0):
+    """A page of rows from the Party or Machines tab, newest first.
+
+    `back` is how many rows from the bottom to skip, so back=0 is the newest
+    page - which is where a record added in the sheet will be.
+    """
     url = sheet_url()
     if not url:
         raise RuntimeError("No Google Sheet is connected yet.")
 
     query = (f"{url}?action=records&tab={urllib.parse.quote(tab)}"
-             f"&limit={int(limit)}&offset={int(offset)}")
+             f"&limit={int(limit)}&back={int(back)}")
     secret = get_setting("sheet_secret", "") or ""
     if secret:
         query += f"&secret={urllib.parse.quote(secret)}"
 
     try:
-        with urllib.request.urlopen(query, timeout=SYNC_TIMEOUT) as response:
+        with urllib.request.urlopen(query, timeout=READ_TIMEOUT) as response:
             body = response.read().decode("utf-8", "replace").strip()
     except urllib.error.HTTPError as exc:
         raise RuntimeError(f"The sheet refused the request (HTTP {exc.code}).") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Could not reach the sheet: {exc.reason}") from exc
     except TimeoutError as exc:
-        raise RuntimeError(f"The sheet did not answer within {SYNC_TIMEOUT} "
-                           "seconds.") from exc
+        raise RuntimeError(
+            f"The {tab} tab did not answer within {READ_TIMEOUT} seconds. It is "
+            "a big tab - press again and it carries on from where it got to."
+        ) from exc
     except OSError as exc:
         raise RuntimeError(f"Could not reach the sheet: {exc}") from exc
 

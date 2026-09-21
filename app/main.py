@@ -847,30 +847,41 @@ def sheet_pull():
     })
 
 
-# Reading the master tabs back.  Pages are pulled until the tab is exhausted
-# or the budget runs out, so a big Party tab comes in over a few presses rather
-# than one request the host gives up on.
-PULL_PAGE = 1000
-PULL_BUDGET = 35.0
+# Reading the master tabs back.  The Party tab runs to thousands of rows, far
+# more than one request can carry, so it is read newest-first a page at a time
+# and where it got to is remembered - pressing again carries on rather than
+# starting over.
+PULL_PAGE = 300
+PULL_BUDGET = 25.0
 
 
 def pull_records(tab, apply_row):
-    """Read a master tab and hand each row to `apply_row`.
+    """Read a master tab newest-first and hand each row to `apply_row`.
 
-    `apply_row(conn, row)` returns "added", "updated" or None.  Returns a
-    summary dict.
+    `apply_row(conn, row)` returns "added", "updated" or None.  Stops when the
+    tab is exhausted or the budget runs out, and remembers the position either
+    way.  Returns a summary dict.
     """
     started = time.monotonic()
+    mark = f"pull_back_{squeeze(tab)}"
+    back = int(get_setting(mark, "0") or 0)
+
     conn = get_db()
     added = updated = skipped = 0
-    offset, total = 0, 0
+    total = 0
+    finished = False
+    trouble = ""
     try:
         while True:
-            page = fetch_records(tab, PULL_PAGE, offset)
-            rows = page.get("rows") or []
-            total = page.get("total", 0)
-            if not rows:
+            try:
+                page = fetch_records(tab, PULL_PAGE, back)
+            except RuntimeError as exc:
+                # Keep what came in and say why it stopped; the next press
+                # resumes from the same place.
+                trouble = str(exc)
                 break
+            rows = page.get("rows") or []
+            total = page.get("total", total)
             for row in rows:
                 outcome = apply_row(conn, row)
                 if outcome == "added":
@@ -880,15 +891,24 @@ def pull_records(tab, apply_row):
                 else:
                     skipped += 1
             conn.commit()
-            offset += len(rows)
-            if offset >= total or time.monotonic() - started > PULL_BUDGET:
+            back = page.get("covered", back + len(rows))
+            if page.get("done") or not rows or back >= total:
+                finished = True
+                break
+            if time.monotonic() - started > PULL_BUDGET:
                 break
     finally:
         conn.commit()
         conn.close()
+
+    # Finished means the next press should start from the newest rows again.
+    set_setting(mark, "0" if finished else str(back))
+    if finished and not trouble:
+        back = total
     return {"added": added, "updated": updated, "skipped": skipped,
-            "read": offset, "total": total,
-            "remaining": max(0, total - offset)}
+            "read": back, "total": total, "finished": finished,
+            "remaining": 0 if finished else max(0, total - back),
+            "trouble": trouble}
 
 
 def _pick(row, *names):
@@ -977,12 +997,18 @@ def sheet_pull_master(kind):
     except RuntimeError as exc:
         return jsonify({"error": str(exc)}), 502
 
+    if summary["trouble"] and not (summary["added"] or summary["updated"]):
+        return jsonify({"error": summary["trouble"]}), 502
+
     noun = one if summary["added"] == 1 else many
-    rows = "row" if summary["read"] == 1 else "rows"
-    message = (f"{summary['added']} new {noun}, {summary['updated']} updated, "
-               f"from {summary['read']} {rows}.")
-    if summary["remaining"]:
-        message += f" {summary['remaining']} still to read - press again."
+    message = (f"{summary['added']} new {noun}, {summary['updated']} updated. "
+               f"Read {summary['read']} of {summary['total']} rows.")
+    if summary["trouble"]:
+        message += f" Stopped: {summary['trouble']}"
+    elif summary["remaining"]:
+        message += f" {summary['remaining']} to go - press again."
+    else:
+        message += " All done."
     return jsonify({**summary, "message": message})
 
 
