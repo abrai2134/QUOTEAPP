@@ -15,7 +15,12 @@
 function doGet(e) {
   try {
     var params = (e && e.parameter) || {};
-    if (params.action !== 'rows') {
+    var action = params.action || '';
+
+    // Anything that is not asking for data gets the health check.  Both data
+    // actions have to be named here: leaving one out sends it the health
+    // check instead, and the code meant to answer it never runs.
+    if (action !== 'rows' && action !== 'records') {
       var book = SpreadsheetApp.getActiveSpreadsheet();
       return reply({
         ok: true,
@@ -40,7 +45,7 @@ function doGet(e) {
 
     // Rows from the Party or Machines tab, a page at a time, so the app can
     // pick up records added in the sheet or by AppSheet.
-    if (params.action === 'records') {
+    if (action === 'records') {
       return readRecords(SpreadsheetApp.getActiveSpreadsheet(), params);
     }
 
