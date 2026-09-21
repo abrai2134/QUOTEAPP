@@ -361,7 +361,7 @@ def push_record(tab, key, match, values, timeout=None, dry_run=False):
     if result.get("via") != "doPost":
         raise RuntimeError(
             "This copy of the script cannot write to the " + tab + " tab. "
-            "Re-paste Code.gs into the script editor and deploy a New version.")
+            "The script's web app is still serving an older version: in the script open Deploy > Manage deployments, press the pencil, set Version to 'New version', then Deploy. Saving the code is not enough on its own.")
     return result
 
 
@@ -538,8 +538,8 @@ def fetch_records(tab, limit=300, back=0):
         raise RuntimeError(result.get("error") or "The sheet refused the request.")
     if "rows" not in result:
         raise RuntimeError(
-            "This copy of the script cannot read the " + tab + " tab. Re-paste "
-            "Code.gs into the script editor and deploy a New version.")
+            "This copy of the script cannot read the " + tab + " tab. "
+            "The script's web app is still serving an older version: in the script open Deploy > Manage deployments, press the pencil, set Version to 'New version', then Deploy. Saving the code is not enough on its own.")
     return result
 
 

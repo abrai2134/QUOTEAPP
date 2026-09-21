@@ -1039,15 +1039,13 @@ def sheet_test():
 
     if probe is None:
         return jsonify({"ok": True, "message":
-            "Reading from the sheet works, but this is an older copy of the "
-            "script, so the part that adds rows could not be checked without "
-            "writing one. Re-paste Code.gs into the script editor and deploy a "
-            "New version to have this tested too."}), 200
+            "Reading from the sheet works, but the web app is serving an "
+            "older version of the script, so the part that adds rows could not "
+            "be checked without writing one. The script's web app is still serving an older version: in the script open Deploy > Manage deployments, press the pencil, set Version to 'New version', then Deploy. Saving the code is not enough on its own."}), 200
     if not probe.get("test"):
         return jsonify({"ok": False, "error":
             "The script answered, but not from the part that adds rows. "
-            "Re-paste Code.gs into the script editor, then Deploy > Manage "
-            "deployments > pencil > Version: New version."}), 502
+            "The script's web app is still serving an older version: in the script open Deploy > Manage deployments, press the pencil, set Version to 'New version', then Deploy. Saving the code is not enough on its own."}), 502
 
     message = "Sheet is connected, reading and writing. Nothing was written to it."
     if health.get("file"):
