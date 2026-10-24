@@ -1,5 +1,9 @@
 # Well Worth Quotation App
 
+> **Also in this repository: the Accounts Desk** — shares Tally Bills Payable /
+> Receivable out between the accounts team and tracks who paid or collected
+> each bill, with double-payment checks. See **[accounts/README.md](accounts/README.md)**.
+
 A replacement for the AppSheet quotation app. Pick a party, tap the machines,
 and it produces the **same .xlsx quotation** you have always sent — same layout,
 same fonts, same terms block, same file name — plus a PDF and an optional e-mail.

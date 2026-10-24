@@ -20,3 +20,28 @@ services:
       name: quoteapp-data
       mountPath: /opt/render/project/src/instance
       sizeGB: 1
+
+  # The Accounts Desk: payables / receivables shared out between the accounts
+  # team.  Render asks for the admin username and password on the first deploy.
+  - type: web
+    name: wellworth-accounts
+    runtime: python
+    plan: starter            # needs the disk, or every payment marked is lost on restart
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m accounts.main
+    healthCheckPath: /health
+    envVars:
+      - key: ACCOUNTS_ADMIN_USER
+        sync: false
+      - key: ACCOUNTS_ADMIN_PASSWORD
+        sync: false
+      - key: ACCOUNTS_ADMIN_NAME
+        value: "Abrar"
+      - key: ACCOUNTS_HTTPS
+        value: "1"
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+    disk:
+      name: accounts-data
+      mountPath: /opt/render/project/src/instance
+      sizeGB: 1

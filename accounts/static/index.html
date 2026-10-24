@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#123f2e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Accounts">
+<title>Accounts Desk</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>₹</text></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <div>
+    <div class="topbar-title" id="title">My work</div>
+    <div class="topbar-sub" id="whoami"></div>
+  </div>
+  <button class="topbar-action" id="uploadBtn">⬆ Upload</button>
+</header>
+
+<main>
+
+<!-- ====================================================== MY WORK / ALL BILLS -->
+<section class="screen" data-screen="work">
+  <div class="seg" id="kindSeg">
+    <button data-kind="payable" class="on">Payables <small>(we pay)</small></button>
+    <button data-kind="receivable">Receivables <small>(we collect)</small></button>
+  </div>
+  <div class="filters">
+    <select id="fFirm"><option value="">All firms</option></select>
+    <select id="fWho"></select>
+    <select id="fStatus">
+      <option value="todo">To do</option>
+      <option value="done">Marked, waiting for Tally</option>
+      <option value="active">Everything still in Tally</option>
+      <option value="alerts">With alerts</option>
+      <option value="cleared">Cleared in Tally</option>
+      <option value="unclaimed">Cleared, nobody marked it</option>
+      <option value="all">All, ever</option>
+    </select>
+    <input type="search" id="fSearch" placeholder="Search party or bill no…">
+  </div>
+  <div class="strip" id="strip"></div>
+  <div id="billList"></div>
+  <p class="empty" id="billEmpty" hidden></p>
+</section>
+
+<!-- ====================================================== SCOREBOARD -->
+<section class="screen" data-screen="score" hidden>
+  <div class="filters">
+    <select id="sPeriod">
+      <option value="today">Today</option>
+      <option value="week">This week</option>
+      <option value="month" selected>This month</option>
+      <option value="all">All time</option>
+      <option value="custom">Pick dates…</option>
+    </select>
+    <select id="sFirm"><option value="">All firms</option></select>
+    <input type="date" id="sFrom" hidden>
+    <input type="date" id="sTo" hidden>
+  </div>
+  <p class="hint" id="scoreRange"></p>
+  <div id="scoreList"></div>
+  <p class="hint">Counted from what each person marked, by the payment / receipt date.
+    <b>Cleared, not marked</b> = Tally shows the bill settled but nobody marked it here,
+    so nobody gets credit for it.</p>
+</section>
+
+<!-- ====================================================== ALERTS -->
+<section class="screen" data-screen="alerts" hidden>
+  <div class="seg" id="alertSeg">
+    <button data-state="open" class="on">Open</button>
+    <button data-state="resolved">Resolved</button>
+  </div>
+  <div id="alertList"></div>
+  <p class="empty" id="alertEmpty" hidden>Nothing to check. 👍</p>
+</section>
+
+<!-- ====================================================== MORE -->
+<section class="screen" data-screen="more" hidden>
+  <div class="block">
+    <h2>Upload Tally files</h2>
+    <p class="hint">Export <b>Bills Payable</b> or <b>Bills Receivable</b> from Tally and upload it as it is.
+      The firm and type are read from the file. Upload every day: bills that have gone from Tally are
+      marked cleared, new bills are shared out.</p>
+    <label>Files <input type="file" id="upFiles" multiple accept=".xls,.xlsx,.csv"></label>
+    <div class="row2">
+      <label>Firm <select id="upFirm"><option value="">Read from file</option></select></label>
+      <label>Type <select id="upKind"><option value="">Read from file</option>
+        <option value="payable">Bills Payable</option><option value="receivable">Bills Receivable</option></select></label>
+    </div>
+    <button class="btn primary" id="upGo">Upload</button>
+    <div id="upResult"></div>
+  </div>
+
+  <div class="block">
+    <h2>Upload history</h2>
+    <div id="upHistory"></div>
+  </div>
+
+  <div class="block admin-only">
+    <h2>Team</h2>
+    <div id="teamList"></div>
+    <details class="add">
+      <summary>+ Add a person</summary>
+      <div class="row2">
+        <label>Name <input id="nuName"></label>
+        <label>Username <input id="nuUser" autocapitalize="none"></label>
+      </div>
+      <div class="row2">
+        <label>Password (8+) <input id="nuPass" type="text"></label>
+        <label>Role <select id="nuRole"><option value="member">Accounts team</option><option value="admin">Admin</option></select></label>
+      </div>
+      <label class="check"><input type="checkbox" id="nuWork" checked> Gets bills when a file is shared out</label>
+      <button class="btn primary" id="nuGo">Add person</button>
+    </details>
+  </div>
+
+  <div class="block admin-only">
+    <h2>Share out again</h2>
+    <p class="hint">Spreads every open bill evenly again across the people who get bills, by number of bills
+      and by amount. All bills of one party stay with one person. A party where someone has already marked
+      a payment stays with them.</p>
+    <div class="row2">
+      <button class="btn" data-redis="payable">Share out payables</button>
+      <button class="btn" data-redis="receivable">Share out receivables</button>
+    </div>
+  </div>
+
+  <div class="block admin-only">
+    <h2>Firms</h2>
+    <div id="firmList"></div>
+    <details class="add">
+      <summary>+ Add a firm</summary>
+      <div class="row2">
+        <label>Short code <input id="nfCode" placeholder="e.g. WWE"></label>
+        <label>Name as on line 1 of Tally report <input id="nfName"></label>
+      </div>
+      <button class="btn primary" id="nfGo">Add firm</button>
+    </details>
+  </div>
+
+  <div class="block">
+    <h2>Download</h2>
+    <div class="links">
+      <a class="btn" href="/api/export/entries.csv?period=month">This month's payments &amp; receipts (CSV)</a>
+      <a class="btn" href="/api/export/entries.csv?period=all">All payments &amp; receipts (CSV)</a>
+      <a class="btn" href="/api/export/bills.csv?status=active">All bills still in Tally (CSV)</a>
+    </div>
+  </div>
+
+  <div class="block">
+    <h2>Activity</h2>
+    <div id="activityList"></div>
+  </div>
+
+  <div class="block">
+    <h2>My login</h2>
+    <div class="row2">
+      <label>Current password <input type="password" id="pwOld"></label>
+      <label>New password <input type="password" id="pwNew"></label>
+    </div>
+    <div class="row2">
+      <button class="btn" id="pwGo">Change password</button>
+      <form method="post" action="/logout"><button class="btn danger" type="submit">Sign out</button></form>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- selection bar -->
+<div class="selbar" id="selbar" hidden>
+  <span id="selText"></span>
+  <button class="btn ghost" id="selClear">Clear</button>
+  <button class="btn primary" id="selMark">Mark</button>
+</div>
+
+<nav class="tabs">
+  <button data-tab="work" data-mine="1" class="on"><span>📋</span>My work</button>
+  <button data-tab="work" data-mine="0"><span>🗂</span>All bills</button>
+  <button data-tab="score"><span>🏆</span>Scoreboard</button>
+  <button data-tab="alerts"><span>⚠️</span>Alerts<b id="alertBadge" hidden></b></button>
+  <button data-tab="more"><span>☰</span>More</button>
+</nav>
+
+<!-- modal -->
+<div class="modal" id="modal" hidden>
+  <div class="sheet">
+    <div class="sheet-head"><b id="mTitle"></b><button class="x" id="mClose">✕</button></div>
+    <div class="sheet-body" id="mBody"></div>
+  </div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
